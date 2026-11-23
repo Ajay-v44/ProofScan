@@ -1,0 +1,76 @@
+name: ProofScan checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  web-api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: proofscan
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: proofscan_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U proofscan -d proofscan_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://proofscan:test-only@127.0.0.1:5432/proofscan_test
+      TEST_DATABASE_URL: postgresql+asyncpg://proofscan:test-only@127.0.0.1:5432/proofscan_test
+      WEB_ORIGIN: http://localhost:3000
+      REPORT_KEY_ID: ci
+      ENABLE_SIMULATOR: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      PYTHONPATH: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: uv sync --locked --python 3.12 --no-install-project
+      - run: |
+          uv run --no-sync python - <<'PY' >> "$GITHUB_ENV"
+          import base64, secrets
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          print("LOCAL_AUTH_SECRET=" + secrets.token_urlsafe(48))
+          print("REPORT_PRIVATE_KEY=" + base64.urlsafe_b64encode(Ed25519PrivateKey.generate().private_bytes_raw()).decode().rstrip("="))
+          PY
+      - run: uv run --no-sync alembic upgrade head
+      - run: uv run --no-sync alembic check
+      - run: uv run --no-sync ruff check apps/api apps/worker
+      - run: uv run --no-sync mypy apps/api/proofscan apps/worker
+      - run: uv run --no-sync pytest -q
+      - run: npm ci --no-audit
+      - run: npm run typecheck
+      - run: npm run lint -w @proofscan/web
+      - run: npm run build -w @proofscan/web
+      - run: npx playwright install --with-deps chromium
+      - run: |
+          uv run --no-sync uvicorn proofscan.main:app --host 127.0.0.1 --port 8000 > /tmp/proofscan-api.log 2>&1 &
+          cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/
+          cp -r apps/web/public apps/web/.next/standalone/apps/web/
+          HOSTNAME=127.0.0.1 node apps/web/.next/standalone/apps/web/server.js > /tmp/proofscan-web.log 2>&1 &
+          curl --silent --fail --retry 15 --retry-connrefused http://127.0.0.1:8000/health
+          curl --silent --fail --retry 15 --retry-connrefused http://localhost:3000/ > /dev/null
+          npm run e2e -w @proofscan/web
+  windows-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - run: npm ci --no-audit
+      - run: npm run build -w @proofscan/desktop
+      - run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
+      - run: cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml

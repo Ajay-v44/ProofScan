@@ -1,0 +1,15 @@
+{
+  "name": "proofscan",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/desktop",
+    "apps/mobile",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @proofscan/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  }
+}

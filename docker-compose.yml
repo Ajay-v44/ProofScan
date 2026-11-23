@@ -1,0 +1,92 @@
+name: proofscan
+x-api-environment: &api-environment
+  DATABASE_URL: ${COMPOSE_DATABASE_URL:?Set COMPOSE_DATABASE_URL using the db service hostname}
+  REDIS_URL: redis://redis:6379/0
+  WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+  AUTH_MODE: ${AUTH_MODE:-local}
+  LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:-}
+  REPORT_KEY_ID: ${REPORT_KEY_ID:?Set REPORT_KEY_ID}
+  REPORT_PRIVATE_KEY: ${REPORT_PRIVATE_KEY:?Set REPORT_PRIVATE_KEY}
+  REPORT_TRUSTED_KEYS: ${REPORT_TRUSTED_KEYS:-}
+  ENABLE_SIMULATOR: ${ENABLE_SIMULATOR:-false}
+  SUPABASE_URL: ${SUPABASE_URL:-}
+  SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+  ADMIN_SUBJECTS: ${ADMIN_SUBJECTS:-[]}
+  EVIDENCE_RETENTION_DAYS: ${EVIDENCE_RETENTION_DAYS:-30}
+  KIMI_API_KEY: ${KIMI_API_KEY:-}
+  KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.ai/v1}
+  KIMI_MODEL: ${KIMI_MODEL:-}
+  KIMI_VISION_MODEL: ${KIMI_VISION_MODEL:-}
+  PRICING_COMPARABLES_FILE: ${PRICING_COMPARABLES_FILE:-}
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-proofscan}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  migrate:
+    image: proofscan-api:local
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: *api-environment
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    image: proofscan-api:local
+    environment: *api-environment
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  worker:
+    image: proofscan-worker:local
+    build:
+      context: .
+      dockerfile: infrastructure/docker/worker.Dockerfile
+    environment: *api-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+  scheduler:
+    image: proofscan-worker:local
+    command: ["celery", "-A", "tasks:celery", "beat", "--loglevel=INFO", "--schedule=/tmp/proofscan-beat"]
+    environment: *api-environment
+    depends_on:
+      - worker
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/web.Dockerfile
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+volumes:
+  postgres-data:

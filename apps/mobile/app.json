@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "ProofScan",
+    "slug": "proofscan",
+    "version": "0.1.0",
+    "scheme": "proofscan",
+    "icon": "./assets/icon.png",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "com.proofscan.mobile"
+    },
+    "android": {
+      "package": "com.proofscan.mobile",
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "ProofScan uses the camera to photograph the outside of the device you are verifying.",
+          "microphonePermission": false,
+          "photosPermission": false
+        }
+      ]
+    ]
+  }
+}

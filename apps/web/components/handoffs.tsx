@@ -1,0 +1,208 @@
+"use client";
+
+import { api, ApiError, type Handoff, type HandoffMode, type HandoffReport, type ScanTicket } from "@proofscan/api-client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ClipboardCheck } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { ErrorNote, PublicShell, Status } from "./shared";
+import { downloadTicket } from "./seller";
+import { jpeg } from "./photo-capture";
+import { EvidenceGallery } from "./evidence-gallery";
+import { AuthDialog } from "./workspace-forms";
+import { Button, buttonVariants } from "./ui/button";
+
+const conditionLabels: Record<string, string> = { clean: "No visible damage", visible_wear: "Visible wear", damaged: "Visible damage" };
+const handoffLabels: Record<string, string> = {
+  DRAFT: "Draft", BASELINE_SCANNING: "Baseline in progress", BASELINE_CREATED: "Baseline saved",
+  ACTIVE_HANDOFF: "Handed off", RETURN_SCANNING: "Return check in progress", REPORT_READY: "Comparison ready", CLOSED: "Closed",
+};
+
+export function HandoffList() {
+  const router = useRouter();
+  const client = useQueryClient();
+  const [signIn, setSignIn] = useState(false);
+  const session = useQuery({ queryKey: ["session"], queryFn: () => api<{ simulator_enabled: boolean }>("/auth/session") });
+  const list = useQuery({ queryKey: ["handoffs"], enabled: session.isSuccess, queryFn: () => api<Handoff[]>("/handoffs") });
+  const create = useMutation({
+    mutationFn: (body: { label: string; mode: HandoffMode }) => api<Handoff>("/handoffs", body),
+    onSuccess: item => { void client.invalidateQueries({ queryKey: ["handoffs"] }); router.push("/handoffs/" + item.id); },
+  });
+  const needsAccount = session.error instanceof ApiError && session.error.status === 401;
+  return <PublicShell wide>
+    <div className="page-title"><span className="eyebrow"><ClipboardCheck size={16} aria-hidden /> Condition records</span><h1>Protect a handoff</h1>
+      <p>Record the condition before an item leaves, then check what changed when it comes back.</p></div>
+    <ErrorNote error={(needsAccount ? null : session.error) ?? list.error ?? create.error} />
+    {needsAccount && <section className="panel form"><h2>Start a new handoff</h2>
+      <p>Sign in to save the starting condition and return to it when the item comes back.</p>
+      <Button onClick={() => setSignIn(true)}>Sign in</Button>
+    </section>}
+    {signIn && !session.data && <AuthDialog initialRegister={false} onAuthenticated={() => setSignIn(false)} onClose={() => setSignIn(false)} />}
+    {session.data && <div className="handoff-library"><form className="panel form" onSubmit={event => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      create.mutate({ label: String(data.get("label")), mode: String(data.get("mode")) as HandoffMode });
+    }}>
+      <h2>Start a new handoff</h2>
+      <label>Asset name<input name="label" maxLength={120} required /></label>
+      <label>Record type<select name="mode"><option value="windows">Windows device</option><option value="visual">Other item · photos and condition</option>
+        {session.data.simulator_enabled && <option value="simulator">Simulator · changed laptop</option>}</select></label>
+      <Button type="submit" disabled={create.isPending}>Create handoff</Button>
+    </form>
+    <section className="panel form"><h2>Your handoffs</h2>
+      {list.isPending ? <p role="status">Loading handoffs…</p> : list.data?.length ? <ul className="records-list">{list.data.map(item => <li key={item.id}>
+        <Link href={"/handoffs/" + item.id} className="quiet-link">{item.label}</Link><Status value={handoffLabels[item.status] ?? item.status} />
+      </li>)}</ul> : <p>No handoffs yet.</p>}
+    </section></div>}
+  </PublicShell>;
+}
+
+function DisplayComparison({ id, item }: { id: string; item: Handoff }) {
+  const result = useQuery({ queryKey: ["handoff-report", id], queryFn: () => api<HandoffReport>("/handoffs/" + id + "/report") });
+  const report = result.data?.payload;
+  return <section className="panel form">
+    <h2>Handoff comparison</h2>
+    <ErrorNote error={result.error} />
+    {result.isPending && <p role="status">Loading comparison…</p>}
+    {report && <>
+      <p className={result.data?.valid ? "notice good" : "notice warning"}>{result.data?.valid ? "Signature verified" : "Report signature is invalid"}</p>
+      {report.mode === "simulator" && <p className="notice warning">SIMULATED DATA · For demonstration only.</p>}
+      <p>Hardware changes are based on the recorded readings. Exterior condition is recorded by the owner. Device identity is unavailable.</p>
+      <div className="table-scroll"><table><thead><tr><th scope="col">Check</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Result</th></tr></thead>
+      <tbody>{report.differences.map(row => <tr key={row.metric}><th scope="row">{row.metric}</th>
+        <td>{conditionLabels[String(row.before)] ?? row.before ?? "Unavailable"}</td><td>{conditionLabels[String(row.after)] ?? row.after ?? "Unavailable"}</td>
+        <td><Status value={row.status === "MISMATCH" ? "Changed" : row.status === "MATCH" ? "Unchanged" : "Unavailable"} /></td>
+      </tr>)}</tbody></table></div>
+      {report.baseline.note && <p><strong>Baseline note</strong> {report.baseline.note}</p>}
+      {report.return.note && <p><strong>Return note</strong> {report.return.note}</p>}
+      <EvidenceGallery items={item.photos.map(phase => ({
+        href: "/api/v1/handoffs/" + id + "/photos/" + phase, label: "Open " + phase + " photo",
+      }))} />
+      <Link href={"/verify/" + report.report_id} className="quiet-link">Check public signature</Link>
+    </>}
+  </section>;
+}
+
+export function HandoffDetail({ id }: { id: string }) {
+  const path = "/handoffs/" + id;
+  const key = ["handoff", id];
+  const client = useQueryClient();
+  const [ticket, setTicket] = useState<ScanTicket | null>(null);
+  const [reading, setReading] = useState<File | null>(null);
+  const [photo, setPhoto] = useState<File | null>(null);
+  const item = useQuery({ queryKey: key, queryFn: () => api<Handoff>(path) });
+  function saved(updated: Handoff) {
+    client.setQueryData(key, updated);
+    void client.invalidateQueries({ queryKey: ["handoffs"] });
+  }
+  const start = useMutation({
+    mutationFn: () => api<{ handoff: Handoff; ticket: ScanTicket | null }>(path + "/start", {}),
+    onSuccess: data => {
+      saved(data.handoff);
+      setTicket(data.ticket);
+      setReading(null);
+      if (data.ticket) downloadTicket(data.ticket);
+    },
+  });
+  const mark = useMutation({ mutationFn: (action: "activate" | "close") => api<Handoff>(path + "/" + action, {}), onSuccess: saved });
+  const invite = useMutation({ mutationFn: () => api<{ url: string }>(path + "/invite", {}) });
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const response = await fetch("/api/v1" + path + "/photos", {
+        method: "POST", headers: { "Content-Type": "image/jpeg" }, body: await jpeg(file),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "Could not save this photo.");
+      return data as Handoff;
+    }, onSuccess: saved,
+  });
+  const record = useMutation({
+    mutationFn: async (data: FormData) => {
+      let hardware: unknown;
+      if (reading) {
+        if (reading.size > 65_536) throw new Error("Choose a scan file under 64 KB.");
+        try { hardware = JSON.parse(await reading.text()); }
+        catch { throw new Error("Choose the JSON file exported by the Windows collector."); }
+      }
+      return api<Handoff>(path + "/record", { condition: data.get("condition") ?? "clean", note: data.get("note") ?? "", reading: hardware });
+    },
+    onSuccess: updated => { saved(updated); setReading(null); setPhoto(null); setTicket(null); },
+  });
+  const data = item.data;
+  const status = data?.status;
+  const scanning = status === "BASELINE_SCANNING" || status === "RETURN_SCANNING";
+  const phase = status === "RETURN_SCANNING" ? "return" : "baseline";
+  const stage = status === "REPORT_READY" || status === "CLOSED" ? 3 : status === "RETURN_SCANNING" ? 2
+    : status === "BASELINE_CREATED" || status === "ACTIVE_HANDOFF" ? 1 : 0;
+
+  return <PublicShell>
+    <div className="page-title"><Link href="/handoffs" className="quiet-link">Your handoffs</Link><h1>{data?.label ?? "Handoff"}</h1>
+      {status && <Status value={handoffLabels[status] ?? status} />}</div>
+    {data && <ol className="steps" aria-label="Handoff progress">
+      {["Baseline", "Handoff", "Return", "Compare"].map((label, index) =>
+        <li key={label} className={index <= stage ? "reached" : ""} aria-current={index === stage ? "step" : undefined}><span>{index + 1}</span>{label}</li>)}
+    </ol>}
+    <ErrorNote error={item.error ?? start.error ?? record.error ?? mark.error ?? invite.error ?? upload.error} />
+    {item.isPending && <p role="status">Opening handoff…</p>}
+    {data?.mode === "simulator" && <p className="notice warning">SIMULATED DATA</p>}
+    {(status === "DRAFT" || status === "ACTIVE_HANDOFF") && <section className="panel form">
+      <h2>{status === "DRAFT" ? "Record the starting condition" : "Check the asset on return"}</h2>
+      <Button disabled={start.isPending} onClick={() => start.mutate()}>{status === "DRAFT" ? "Start baseline" : "Start return check"}</Button>
+    </section>}
+    {data && scanning && <section className="panel form" key={phase}>
+      <h2>{phase === "baseline" ? "Baseline checkpoint" : "Return checkpoint"}</h2>
+      {data.mode === "windows" && <div className="actions">
+        <Button variant="outline" onClick={() => start.mutate()} disabled={start.isPending}>{ticket ? "Download fresh ticket" : "Download scan ticket"}</Button>
+        <a className={buttonVariants({ variant: "outline" })} href="/collect-windows.ps1" download>PowerShell collector</a>
+      </div>}
+      {data.mode !== "simulator" && <>
+        <p>{phase === "return" ? "Photograph the same side in similar lighting." : "Take a clear photo of the full front of the asset."}</p>
+        {phase === "return" && data.photos.includes("baseline") && <EvidenceGallery items={[
+          { href: "/api/v1" + path + "/photos/baseline", label: "See baseline photo" },
+        ]} />}
+        <label>Checkpoint photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={event => setPhoto(event.target.files?.[0] ?? null)} /></label>
+        <Button variant="outline" disabled={!photo || upload.isPending} onClick={() => { if (photo) upload.mutate(photo); }}>Check and save photo</Button>
+        {data.photos.includes(phase) && <p role="status">Checkpoint photo saved.</p>}
+      </>}
+      <form className="form" onSubmit={event => { event.preventDefault(); record.mutate(new FormData(event.currentTarget)); }}>
+        {data.mode === "windows" && <label>Windows scan file<input type="file" accept=".json,application/json" onChange={event => setReading(event.target.files?.[0] ?? null)} required /></label>}
+        {data.mode !== "simulator" && <>
+          <label>Exterior condition<select name="condition">{Object.entries(conditionLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label>Notes<textarea name="note" rows={3} maxLength={400} /></label>
+        </>}
+        <Button type="submit" disabled={record.isPending || (data.mode === "visual" && !data.photos.includes(phase))}>
+          {phase === "baseline" ? "Record baseline" : "Record return"}
+        </Button>
+      </form>
+    </section>}
+    {data && (status === "BASELINE_CREATED" || status === "ACTIVE_HANDOFF") && <section className="panel form">
+      <h2>Receiver acceptance</h2>
+      {data.receiver_accepted ? <p className="notice good">Receiver accepted.</p> : <>
+        <p>Invite the receiver to acknowledge the handoff, or continue without their acceptance.</p>
+        <Button variant="outline" disabled={invite.isPending} onClick={() => invite.mutate()}>Create acceptance link</Button>
+        {invite.data && <label>Private acceptance link<input value={invite.data.url} readOnly onFocus={event => event.target.select()} /></label>}
+        <Button variant="quiet" onClick={() => void item.refetch()}>Refresh acceptance</Button>
+      </>}
+      {status === "BASELINE_CREATED" && <Button onClick={() => mark.mutate("activate")} disabled={mark.isPending}>Mark as handed off</Button>}
+    </section>}
+    {data && (status === "REPORT_READY" || status === "CLOSED") && <>
+      <DisplayComparison id={id} item={data} />
+      {status === "REPORT_READY" && <Button variant="outline" onClick={() => mark.mutate("close")} disabled={mark.isPending}>Close handoff</Button>}
+    </>}
+  </PublicShell>;
+}
+
+export function AcceptHandoff({ id }: { id: string }) {
+  const accept = useMutation({
+    mutationFn: () => api("/handoffs/" + id + "/accept", { token: window.location.hash.slice(1) }),
+    onSuccess: () => window.history.replaceState(null, "", window.location.pathname),
+  });
+  return <PublicShell><section className="panel form">
+    <h1>Acknowledge a handoff</h1>
+    <p>Accept to record when you acknowledged receiving the item.</p>
+    <ErrorNote error={accept.error} />
+    {accept.isSuccess ? <p className="notice good" role="status">Acceptance recorded.</p>
+      : <Button disabled={accept.isPending} onClick={() => accept.mutate()}>Accept handoff</Button>}
+  </section></PublicShell>;
+}
