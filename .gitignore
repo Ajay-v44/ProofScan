@@ -94,3 +94,9 @@ dist/
 target/
 *.tsbuildinfo
 .expo/
+/apps/mobile/android/
+/apps/mobile/ios/
+*.aab
+*.apk
+*.ipa
+*.xcarchive/

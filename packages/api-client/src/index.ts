@@ -59,10 +59,17 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, data?: unknown, transport?: { origin: string; guestToken: string }): Promise<T> {
+type GuestTransport = {
+  origin: string;
+  guestToken: string;
+  fetcher?: (url: string, init: RequestInit) => Promise<Pick<Response, "ok" | "status" | "json">>;
+};
+
+export async function api<T>(path: string, data?: unknown, transport?: GuestTransport): Promise<T> {
   let response;
   try {
-    response = await fetch((transport?.origin ?? "") + "/api/v1" + path, {
+    const fetcher = transport?.fetcher ?? fetch;
+    response = await fetcher((transport?.origin ?? "") + "/api/v1" + path, {
       method: data === undefined ? "GET" : "POST",
       cache: "no-store",
       credentials: transport ? "omit" : "same-origin",

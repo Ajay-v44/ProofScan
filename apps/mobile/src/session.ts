@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import { create } from "zustand";
+import { isWorkspaceUrl, parseOrigin } from "./origin.cjs";
 
 export type SellerSession = { id: string; guestToken: string };
 const key = "proofscan-seller-v1";
@@ -8,20 +9,13 @@ const idPattern = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i;
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/;
 
 export function apiOrigin() {
-  if (!originValue) throw new Error("Set EXPO_PUBLIC_PROOFSCAN_ORIGIN before opening a seller session.");
-  const url = new URL(originValue);
-  if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
-    throw new Error("Use the configured ProofScan server origin, without a path or credentials.");
-  }
-  if (url.protocol !== "https:" && !(__DEV__ && url.protocol === "http:")) {
-    throw new Error("The ProofScan server must use HTTPS.");
-  }
-  return url.origin;
+  return parseOrigin(originValue, __DEV__);
 }
 
 export function parseSellerLink(raw: string): SellerSession {
-  const link = new URL(raw.trim());
-  if (link.origin !== apiOrigin() || link.username || link.password) throw new Error("Use a seller link from your configured ProofScan server.");
+  const value = raw.trim();
+  if (!isWorkspaceUrl(value, apiOrigin())) throw new Error("Use a seller link from your configured ProofScan server.");
+  const link = new URL(value);
   const path = link.pathname.split("/");
   const id = path[2] ?? "";
   const guestToken = link.hash.slice(1);
@@ -39,22 +33,29 @@ type Store = {
   clear: () => Promise<void>;
 };
 
+let pendingRestore: Promise<void> | undefined;
+
 export const useSession = create<Store>(set => ({
   seller: null,
   restored: false,
-  async restore() {
-    try {
-      const raw = await SecureStore.getItemAsync(key);
-      if (raw) {
-        const value = JSON.parse(raw);
-        if (value.origin === apiOrigin() && idPattern.test(value.id) && tokenPattern.test(value.guestToken)) {
-          set({ seller: { id: value.id, guestToken: value.guestToken } });
-        }
+  restore() {
+    pendingRestore ??= SecureStore.getItemAsync(key).then(raw => {
+      if (!raw) return;
+      const value = JSON.parse(raw);
+      if (value?.origin === apiOrigin() && typeof value.id === "string" && typeof value.guestToken === "string" &&
+        idPattern.test(value.id) && tokenPattern.test(value.guestToken)) {
+        set({ seller: { id: value.id, guestToken: value.guestToken } });
       }
-    } finally { set({ restored: true }); }
+    }).finally(() => {
+      pendingRestore = undefined;
+      set({ restored: true });
+    });
+    return pendingRestore;
   },
   async save(seller) {
-    await SecureStore.setItemAsync(key, JSON.stringify({ ...seller, origin: apiOrigin() }));
+    await SecureStore.setItemAsync(key, JSON.stringify({ ...seller, origin: apiOrigin() }), {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
     set({ seller, restored: true });
   },
   async clear() {

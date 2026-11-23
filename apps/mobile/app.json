@@ -5,6 +5,7 @@
     "version": "0.1.0",
     "scheme": "proofscan",
     "icon": "./assets/icon.png",
+    "backgroundColor": "#f7f7fa",
     "platforms": [
       "ios",
       "android"
@@ -16,13 +17,34 @@
     },
     "android": {
       "package": "com.proofscan.mobile",
+      "allowBackup": false,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon-adaptive.png",
+        "monochromeImage": "./assets/icon-adaptive.png",
+        "backgroundColor": "#5131bb"
+      },
       "blockedPermissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
       ]
     },
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#5131bb",
+          "image": "./assets/splash-mark.png",
+          "imageWidth": 152,
+          "resizeMode": "contain"
+        }
+      ],
       [
         "expo-image-picker",
         {

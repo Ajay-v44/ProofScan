@@ -1,13 +1,15 @@
-import { colors } from "@proofscan/design-tokens";
+import { colors, radii } from "@proofscan/design-tokens";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useRef, useState } from "react";
-import { BackHandler, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, BackHandler, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
+import { isWorkspaceUrl } from "../src/origin.cjs";
 import { apiOrigin } from "../src/session";
-import { Action, Panel, Screen, styles } from "../src/ui";
+import { Action, styles } from "../src/ui";
 
 type WorkspaceWebView = WebView<Record<never, never>>;
+type Connection = "loading" | "slow" | "ready" | "failed";
 
 function configuredOrigin() {
   try { return apiOrigin(); }
@@ -18,63 +20,108 @@ export default function Workspace() {
   const router = useRouter();
   const browser = useRef<WorkspaceWebView>(null);
   const canGoBack = useRef(false);
+  const [connection, setConnection] = useState<Connection>("loading");
   const [attempt, setAttempt] = useState(0);
   const origin = configuredOrigin();
+  const visible = !!origin && connection === "ready";
+  const openScanner = () => router.push("/scanner");
+
+  useEffect(() => {
+    if (!origin || connection !== "loading") return;
+    const timer = setTimeout(() => setConnection("slow"), 15_000);
+    return () => clearTimeout(timer);
+  }, [connection, origin, attempt]);
 
   useFocusEffect(useCallback(() => {
     const handle = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (!canGoBack.current) return false;
+      if (!visible || !canGoBack.current) return false;
       browser.current?.goBack();
       return true;
     });
     return () => handle.remove();
-  }, []));
+  }, [visible]));
 
-  function isWorkspaceUrl(value: string) {
-    try {
-      const url = new URL(value);
-      return url.origin === origin && !url.username && !url.password;
-    } catch { return false; }
+  function retry() {
+    canGoBack.current = false;
+    setConnection("loading");
+    setAttempt(value => value + 1);
   }
 
-  if (!origin) return <Screen>
-    <Text style={styles.title}>ProofScan</Text>
-    <Panel><Text style={styles.heading}>Connect your workspace</Text>
-      <Text style={styles.text}>Set EXPO_PUBLIC_PROOFSCAN_ORIGIN on your Expo host to open the ProofScan workspace here.</Text>
-      <Action quiet onPress={() => router.push("/scanner")}>Open device scanner</Action>
-    </Panel>
-  </Screen>;
+  const startup = !origin
+    ? { heading: "Workspace setup required", detail: "This build needs a ProofScan workspace address. Contact your workspace administrator." }
+    : connection === "failed"
+      ? { heading: "Can’t open the workspace", detail: "Check your connection and try again." }
+      : connection === "slow"
+        ? { heading: "Still connecting", detail: "If your connection is slow, give it a moment or try again." }
+        : { heading: "Opening your workspace", detail: "Connecting to ProofScan securely." };
 
   return <SafeAreaView style={workspaceStyles.screen}>
     <View style={workspaceStyles.bar}>
-      <Text style={workspaceStyles.label}>ProofScan</Text>
-      <Pressable accessibilityRole="button" onPress={() => router.push("/scanner")} style={workspaceStyles.scanner}>
-        <Text style={workspaceStyles.scannerText}>Device scanner</Text>
-      </Pressable>
+      <Text accessibilityRole="header" style={workspaceStyles.label}>Workspace</Text>
+      <View style={workspaceStyles.tools}>
+        <Pressable accessibilityRole="button" onPress={() => router.push("/privacy")}
+          style={({ pressed }) => [workspaceStyles.tool, pressed && workspaceStyles.pressed]}>
+          <Text style={workspaceStyles.toolText}>Privacy</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={openScanner}
+          style={({ pressed }) => [workspaceStyles.tool, workspaceStyles.scanner, pressed && workspaceStyles.pressed]}>
+          <Text style={workspaceStyles.toolText}>Scan device</Text>
+        </Pressable>
+      </View>
     </View>
-    <WebView<Record<never, never>> ref={browser} key={attempt} source={{ uri: origin }} originWhitelist={["*"]} style={workspaceStyles.web}
-      allowFileAccess={false} allowFileAccessFromFileURLs={false} allowUniversalAccessFromFileURLs={false}
-      onShouldStartLoadWithRequest={request => isWorkspaceUrl(request.url)}
-      onNavigationStateChange={state => { canGoBack.current = state.canGoBack; }}
-      onOpenWindow={event => {
-        const target = event.nativeEvent.targetUrl;
-        if (isWorkspaceUrl(target)) browser.current?.injectJavaScript("location.assign(" + JSON.stringify(target) + "); true;");
-      }}
-      renderError={() => <Screen><Panel>
-        <Text style={styles.heading}>Workspace unavailable</Text>
-        <Text style={styles.text}>Check that your device can reach {origin}.</Text>
-        <Action onPress={() => setAttempt(value => value + 1)}>Try again</Action>
-      </Panel></Screen>}
-    />
+    <View style={workspaceStyles.body}>
+      {origin && <View pointerEvents={visible ? "auto" : "none"} accessibilityElementsHidden={!visible}
+        importantForAccessibility={visible ? "auto" : "no-hide-descendants"} style={workspaceStyles.body}>
+        <WebView<Record<never, never>> ref={browser} key={attempt} source={{ uri: origin }} originWhitelist={["*"]} style={workspaceStyles.web}
+          allowFileAccess={false} allowFileAccessFromFileURLs={false} allowUniversalAccessFromFileURLs={false}
+          mixedContentMode="never" thirdPartyCookiesEnabled={false}
+          onShouldStartLoadWithRequest={request => isWorkspaceUrl(request.url, origin)}
+          onNavigationStateChange={state => { canGoBack.current = state.canGoBack; }}
+          onOpenWindow={event => {
+            const target = event.nativeEvent.targetUrl;
+            if (isWorkspaceUrl(target, origin)) browser.current?.injectJavaScript("location.assign(" + JSON.stringify(target) + "); true;");
+          }}
+          onLoad={event => {
+            if (isWorkspaceUrl(event.nativeEvent.url, origin)) {
+              setConnection(value => value === "failed" ? value : "ready");
+            }
+          }}
+          onHttpError={event => { if (event.nativeEvent.statusCode >= 500) setConnection("failed"); }}
+          onError={() => setConnection("failed")}
+          onContentProcessDidTerminate={() => setConnection("failed")}
+          onRenderProcessGone={() => setConnection("failed")}
+          renderError={() => <View />}
+        />
+      </View>}
+      {!visible && <ScrollView style={workspaceStyles.overlay} contentContainerStyle={workspaceStyles.launch}
+        keyboardShouldPersistTaps="handled">
+        <View style={workspaceStyles.launchContent}>
+          <Image accessible={false} source={require("../assets/icon.png")} style={workspaceStyles.mark} />
+          <Text accessibilityRole="header" accessibilityLiveRegion="polite" style={styles.heading}>{startup.heading}</Text>
+          <Text style={[styles.text, workspaceStyles.detail]}>{startup.detail}</Text>
+          {!!origin && connection === "loading" && <ActivityIndicator color={colors.brand} />}
+          {!!origin && connection !== "loading" && <Action onPress={retry}>Try again</Action>}
+        </View>
+      </ScrollView>}
+    </View>
   </SafeAreaView>;
 }
 
 const workspaceStyles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface },
-  bar: { height: 43, paddingLeft: 15, paddingRight: 8, flexDirection: "row", alignItems: "center",
+  bar: { minHeight: 57, paddingVertical: 4, paddingHorizontal: 16, gap: 10, flexDirection: "row", flexWrap: "wrap", alignItems: "center",
     justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: colors.line },
-  label: { color: colors.muted, fontWeight: "700", fontSize: 13 },
-  scanner: { minHeight: 42, justifyContent: "center", paddingHorizontal: 9 },
-  scannerText: { color: colors.brand, fontWeight: "700", fontSize: 13 },
+  label: { color: colors.ink, fontWeight: "700", fontSize: 15 },
+  tools: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
+  tool: { minHeight: 48, justifyContent: "center", paddingHorizontal: 12, borderRadius: radii.control },
+  scanner: { backgroundColor: colors.brandTint },
+  toolText: { color: colors.brand, fontWeight: "700", fontSize: 14 },
+  pressed: { opacity: 0.7 },
+  body: { flex: 1, backgroundColor: colors.canvas },
   web: { flex: 1, backgroundColor: colors.canvas },
+  overlay: { ...StyleSheet.absoluteFill, backgroundColor: colors.canvas },
+  launch: { flexGrow: 1, justifyContent: "center", alignItems: "center", padding: 24 },
+  launchContent: { width: "100%", maxWidth: 320, alignItems: "center", gap: 15 },
+  mark: { width: 72, height: 72, borderRadius: radii.cover, marginBottom: 5 },
+  detail: { textAlign: "center" },
 });

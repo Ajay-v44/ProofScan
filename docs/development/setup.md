@@ -35,9 +35,9 @@ Install Rust stable, Visual Studio Build Tools with MSVC and the Windows SDK, an
 
 On a Mac, install Xcode command-line tools and Rust stable. Run the same Tauri development command and choose macOS when issuing a desktop seller ticket. The macOS collector reads system model and memory, plus processor name where available. It requires a separate native build and device check.
 
-For Android and iOS, use an Expo development host and a phone that can reach the configured ProofScan origin. Set `WEB_ORIGIN` on the API and `EXPO_PUBLIC_PROOFSCAN_ORIGIN` in the Expo process to that same origin. Use HTTPS for a device build. Run `npm run dev -w @proofscan/mobile` and open a compatible Expo client or development build. The app opens the same workspace as the browser. Choose **Device scanner** and paste the original seller link to collect native readings. The app retains the scoped seller session in the OS secure store.
+For Android and iOS, use an Expo development host and a phone that can reach the configured ProofScan origin. Set `WEB_ORIGIN` on the API and `EXPO_PUBLIC_PROOFSCAN_ORIGIN` in the Expo process to that same origin. Run `npm run dev -w @proofscan/mobile` and open the development build on the phone. The app opens the same workspace as the browser. Choose **Scan device** and paste the original seller link to collect native readings. The app retains the scoped seller session in the OS secure store.
 
-Run `npm run export -w @proofscan/mobile -- --platform all` to produce Android and iOS JavaScript bundles. Native packaging, universal links and attestation also require platform configuration.
+See the [mobile release guide](mobile-release.md) for development builds, EAS profiles, and device testing.
 
 ## Worker
 

@@ -1,5 +1,5 @@
-import { api, type Angle, type GuestView, type ScanTicket } from "@proofscan/api-client";
-import { colors } from "@proofscan/design-tokens";
+import { api, ApiError, type Angle, type GuestView, type ScanTicket } from "@proofscan/api-client";
+import { colors, radii } from "@proofscan/design-tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Device from "expo-device";
 import { fetch as expoFetch } from "expo/fetch";
@@ -8,15 +8,21 @@ import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { Image, Platform, Text, View } from "react-native";
+import { ActivityIndicator, Image, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { apiOrigin, useSession } from "../src/session";
 import { Action, Failure, Panel, Screen, StepRail, styles } from "../src/ui";
 
 const angles = ["front", "back", "left", "right"] as const;
+const angleLabel: Record<Angle, string> = { front: "Front", back: "Back", left: "Left side", right: "Right side" };
+const steps = ["Consent", "Collect", "Review", "Decision"];
 const policy = "2026-11-23";
 
 function clean(file: File | null) {
   try { if (file?.exists) file.delete(); } catch { /* Cache files are also cleared by the OS. */ }
+}
+
+function sellerFetch(url: string, init: Parameters<typeof expoFetch>[1]) {
+  return expoFetch(url, { ...init, credentials: "omit", redirect: "error", signal: AbortSignal.timeout(30_000) });
 }
 
 export default function Seller() {
@@ -28,15 +34,19 @@ export default function Seller() {
   const [restoreError, setRestoreError] = useState<unknown>(null);
   const [ticket, setTicket] = useState<ScanTicket | null>(null);
   const [angle, setAngle] = useState<Angle>("front");
+  const [cameraSettingsNeeded, setCameraSettingsNeeded] = useState(false);
+  const [cameraSettingsError, setCameraSettingsError] = useState<unknown>(null);
   const platform = Platform.OS === "ios" ? "ios" : "android";
   const path = "/guest/" + session?.id;
   const key = ["mobile-seller", session?.id];
 
-  useEffect(() => { if (!restored) void restore().catch(setRestoreError); }, [restore, restored]);
+  useEffect(() => {
+    if (!restored) void restore().catch(() => setRestoreError(new Error("Couldn’t restore your session. Open the original seller link again.")));
+  }, [restore, restored]);
 
   function call<T>(suffix: string, data?: unknown) {
     if (!session) return Promise.reject(new Error("Open a private seller link first."));
-    return api<T>(path + suffix, data, { origin: apiOrigin(), guestToken: session.guestToken });
+    return api<T>(path + suffix, data, { origin: apiOrigin(), guestToken: session.guestToken, fetcher: sellerFetch });
   }
 
   const guest = useQuery({
@@ -59,9 +69,11 @@ export default function Seller() {
   const photo = useMutation({
     mutationFn: async () => {
       if (!session) throw new Error("Open a private seller link first.");
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) throw new Error("Allow camera access to capture a photo.");
-      const current = await scanTicket();
+      setCameraSettingsError(null);
+      let permission = await ImagePicker.getCameraPermissionsAsync();
+      if (!permission.granted && permission.canAskAgain) permission = await ImagePicker.requestCameraPermissionsAsync();
+      setCameraSettingsNeeded(!permission.granted && !permission.canAskAgain);
+      if (!permission.granted) throw new Error("Allow camera access to take an exterior photo. You can continue without photos.");
       const captured = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.8, exif: false });
       if (captured.canceled) return;
       const asset = captured.assets[0];
@@ -76,18 +88,19 @@ export default function Seller() {
         const saved = await image.saveAsync({ format: SaveFormat.JPEG, compress: 0.76 });
         processed = new File(saved.uri);
         if (processed.size > 750_000) throw new Error("Try a clearer photo with a plain background.");
-        const response = await expoFetch(apiOrigin() + "/api/v1" + path + "/photos?angle=" + angle, {
+        const current = await scanTicket();
+        const response = await sellerFetch(apiOrigin() + "/api/v1" + path + "/photos?angle=" + angle, {
           method: "POST",
           headers: { "Content-Type": "image/jpeg", "X-Guest-Token": session.guestToken, "X-Scan-Challenge": current.challenge },
           body: await processed.arrayBuffer(),
-        });
+        }).catch(() => { throw new Error("Couldn’t upload the photo. Check your connection and try again."); });
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
           throw new Error(data.detail ?? "The photo could not be saved.");
         }
       } finally { clean(processed); clean(original); }
     },
-    onSuccess: () => client.invalidateQueries({ queryKey: key }),
+    onSettled: () => client.invalidateQueries({ queryKey: key }),
   });
 
   const submit = useMutation({
@@ -104,38 +117,75 @@ export default function Seller() {
       });
     },
     onSuccess: save,
+    onError: () => { setTicket(null); void guest.refetch(); },
   });
   const decision = useMutation({
     mutationFn: (value: "share" | "decline") => call<GuestView>("/decision", { decision: value }),
     onSuccess: save,
+    onError: () => { void guest.refetch(); },
   });
   const status = guest.data?.verification.status;
   const step = status === "COMPLETED" || status === "DECLINED" ? 3 : status === "SELLER_REVIEW" ? 2
     : status === "CONSENTED" || status === "SCANNING" ? 1 : 0;
   const preview = guest.data?.preview;
   const busy = consent.isPending || photo.isPending || submit.isPending || decision.isPending;
+  const collecting = status === "CONSENTED" || status === "SCANNING";
+  const linkUnavailable = guest.error instanceof ApiError && guest.error.status === 404;
+  const savedAngles = new Set(guest.data?.photos.map(item => item.angle));
+  const stageError = status === "SELLER_OPENED" ? consent.error
+    : collecting ? submit.error ?? photo.error ?? cameraSettingsError
+      : status === "SELLER_REVIEW" ? decision.error : null;
 
   return <Screen>
-    <Text style={styles.title}>{guest.data?.verification.label ?? "Seller verification"}</Text>
-    {status && <StepRail steps={["Consent", "Collect", "Review", "Decision"]} current={step} />}
-    <Failure error={restoreError ?? guest.error ?? consent.error ?? photo.error ?? submit.error ?? decision.error} />
-    {!restored || (session && guest.isPending) ? <Text style={styles.text}>Opening seller session…</Text> : null}
-    {restored && !session && <Action onPress={() => router.replace("/scanner")}>Open a seller link</Action>}
+    <View style={styles.intro}>
+      <Text accessibilityRole="header" style={styles.title}>{guest.data?.verification.label ?? "Your verification"}</Text>
+      <Text style={styles.text}>Review your readings and photos before sharing a report.</Text>
+    </View>
+    {status && !linkUnavailable && <StepRail steps={steps} current={step} />}
+    <Failure error={restoreError ?? guest.error ?? stageError} />
+    {(!restored || (session && guest.isPending && guest.isFetching)) && <Panel style={sellerStyles.loading}>
+      <ActivityIndicator color={colors.brand} />
+      <Text accessibilityLiveRegion="polite" style={styles.text}>Opening seller session…</Text>
+    </Panel>}
+    {guest.isError && !linkUnavailable && <Action quiet disabled={guest.isFetching} onPress={() => void guest.refetch()}>Reconnect</Action>}
+    {restored && (!session || linkUnavailable) && <Action onPress={() => router.replace("/scanner")}>Open a seller link</Action>}
+    {linkUnavailable && <Text style={styles.text}>Ask your buyer for a fresh seller link.</Text>}
+    {!linkUnavailable && <>
     {status === "SELLER_OPENED" && <Panel>
       <Text style={styles.heading}>Review what we collect</Text>
       <Text style={styles.text}>ProofScan reads device model and memory where available. You can add exterior photos, then review everything before the buyer sees it.</Text>
-      <Action disabled={busy} onPress={() => consent.mutate()}>Agree and continue</Action>
+      <Action disabled={busy} onPress={() => consent.mutate()}>{consent.isPending ? "Saving consent…" : "Agree and continue"}</Action>
     </Panel>}
-    {(status === "CONSENTED" || status === "SCANNING") && <Panel>
-      <Text style={styles.heading}>Collect device readings</Text>
-      <Text style={styles.text}>Battery health and physical drive capacity are unavailable in this mobile collector.</Text>
-      <Text style={styles.heading}>Optional exterior photos</Text>
-      <Text style={styles.text}>Choose a side and photograph the entire device in even light.</Text>
-      <View style={{ gap: 7 }}>{angles.map(item => <Action key={item} quiet={item !== angle} disabled={busy} onPress={() => setAngle(item)}>{item}</Action>)}</View>
-      <Action quiet disabled={busy} onPress={() => photo.mutate()}>{photo.isPending ? "Checking photo…" : "Take photo"}</Action>
-      {!!guest.data?.photos.length && <Text style={styles.text}>Saved views {guest.data.photos.map(item => item.angle).join(", ")}</Text>}
-      <Action disabled={busy} onPress={() => submit.mutate()}>{submit.isPending ? "Collecting…" : "Collect and preview"}</Action>
-    </Panel>}
+    {collecting && <>
+      <Panel>
+        <Text accessibilityRole="header" style={styles.heading}>Exterior photos</Text>
+        <Text style={styles.text}>Optional. Choose a side and photograph the entire device in even light.</Text>
+        <View accessibilityRole="radiogroup" style={sellerStyles.angleGroup}>
+          {angles.map(item => {
+            const selected = item === angle;
+            return <Pressable key={item} accessibilityRole="radio" accessibilityState={{ checked: selected, disabled: busy }}
+              disabled={busy} onPress={() => setAngle(item)}
+              style={({ pressed }) => [sellerStyles.angle, selected && sellerStyles.angleSelected, pressed && sellerStyles.anglePressed]}>
+              <Text style={[styles.fieldLabel, selected && sellerStyles.selectedLabel]}>{angleLabel[item]}</Text>
+              {savedAngles.has(item) && <Text style={sellerStyles.saved}>Saved</Text>}
+            </Pressable>;
+          })}
+        </View>
+        <Action quiet disabled={busy} onPress={() => { submit.reset(); photo.mutate(); }}>
+          {photo.isPending ? "Saving photo…" : savedAngles.has(angle) ? "Retake photo" : "Take photo"}
+        </Action>
+        {cameraSettingsNeeded && <Action quiet onPress={() => void Linking.openSettings().catch(() => {
+          setCameraSettingsError(new Error("Open your phone’s settings and allow camera access for ProofScan."));
+        })}>Open camera settings</Action>}
+      </Panel>
+      <Panel>
+        <Text accessibilityRole="header" style={styles.heading}>Device readings</Text>
+        <Text style={styles.text}>ProofScan reads the model and memory when available.</Text>
+        <Action disabled={busy} onPress={() => { photo.reset(); submit.mutate(); }}>
+          {submit.isPending ? "Collecting…" : "Collect and preview"}
+        </Action>
+      </Panel>
+    </>}
     {status === "SELLER_REVIEW" && preview && <Panel>
       <Text style={styles.heading}>Review before sharing</Text>
       <Text style={styles.text}>{[preview.hardware.manufacturer, preview.hardware.model].filter(Boolean).join(" ") || "Model unavailable"}</Text>
@@ -145,12 +195,30 @@ export default function Seller() {
       </Text>)}
       {!!preview.visual_evidence?.length && session && <Text style={styles.heading}>Exterior photos</Text>}
       {preview.visual_evidence?.map(item => session ? <Image key={item.id} accessibilityLabel={item.angle + " of device"}
-        style={{ height: 185, width: "100%", backgroundColor: colors.canvas }} resizeMode="contain"
+        style={sellerStyles.evidence} resizeMode="contain"
         source={{ uri: apiOrigin() + "/api/v1" + path + "/photos/" + item.id, headers: { "X-Guest-Token": session.guestToken } }} /> : null)}
-      <Action disabled={busy} onPress={() => decision.mutate("share")}>Share signed report</Action>
+      <Action disabled={busy} onPress={() => decision.mutate("share")}>{decision.isPending ? "Saving decision…" : "Share signed report"}</Action>
       <Action quiet disabled={busy} onPress={() => decision.mutate("decline")}>Decline to share</Action>
     </Panel>}
     {status === "COMPLETED" && <Panel><Text style={styles.heading}>Report shared</Text><Text style={styles.text}>The buyer can open the signed report in their workspace.</Text></Panel>}
     {status === "DECLINED" && <Panel><Text style={styles.heading}>Sharing declined</Text><Text style={styles.text}>Your readings stayed private.</Text></Panel>}
+    {(status === "EXPIRED" || status === "CANCELLED" || status === "FAILED") && <Panel>
+      <Text accessibilityRole="header" style={styles.heading}>Verification unavailable</Text>
+      <Text style={styles.text}>Ask your buyer for a fresh seller link.</Text>
+      <Action quiet onPress={() => router.replace("/scanner")}>Back to device scanner</Action>
+    </Panel>}
+    </>}
   </Screen>;
 }
+
+const sellerStyles = StyleSheet.create({
+  loading: { flexDirection: "row", alignItems: "center" },
+  angleGroup: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  angle: { flexBasis: "46%", flexGrow: 1, minHeight: 48, justifyContent: "center", padding: 11, borderWidth: 1,
+    borderColor: colors.border, borderRadius: radii.control },
+  angleSelected: { borderColor: colors.focus, backgroundColor: colors.brandTint },
+  selectedLabel: { color: colors.brand },
+  anglePressed: { opacity: 0.7 },
+  saved: { alignSelf: "flex-start", marginTop: 4, color: colors.mintInk, fontSize: 13, fontWeight: "700" },
+  evidence: { height: 185, width: "100%", borderRadius: radii.control, backgroundColor: colors.canvas },
+});

@@ -60,6 +60,26 @@ jobs:
           curl --silent --fail --retry 15 --retry-connrefused http://127.0.0.1:8000/health
           curl --silent --fail --retry 15 --retry-connrefused http://localhost:3000/ > /dev/null
           npm run e2e -w @proofscan/web
+  mobile:
+    runs-on: ubuntu-latest
+    env:
+      EXPO_PUBLIC_PROOFSCAN_ORIGIN: https://proofscan.example
+      EXPO_PUBLIC_PROOFSCAN_PRIVACY_URL: https://proofscan.example/privacy
+      EXPO_PUBLIC_PROOFSCAN_DELETE_ACCOUNT_URL: https://proofscan.example/account/delete
+      PROOFSCAN_REQUIRE_HTTPS_ORIGIN: "1"
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit
+      - run: npm run test -w @proofscan/mobile
+      - run: npm run typecheck -w @proofscan/mobile
+      - run: npx --yes expo-doctor@1.21.8
+        working-directory: apps/mobile
+      - run: npm run export -w @proofscan/mobile -- --platform all --max-workers 3
   windows-desktop:
     runs-on: windows-latest
     steps:

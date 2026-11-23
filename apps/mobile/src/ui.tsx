@@ -1,32 +1,37 @@
 import { colors, radii } from "@proofscan/design-tokens";
 import { Pressable, ScrollView, StyleSheet, Text, View, type ViewProps } from "react-native";
 import type { ReactNode } from "react";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export const styles = StyleSheet.create({
   screen: { backgroundColor: colors.canvas, flex: 1 },
-  layout: { padding: 18, gap: 17, paddingBottom: 42 },
-  panel: { backgroundColor: colors.surface, padding: 17, borderRadius: radii.card, borderWidth: 1, borderColor: colors.line, gap: 11 },
-  title: { fontSize: 32, lineHeight: 36, fontWeight: "800", letterSpacing: -1.2, color: colors.ink },
+  layout: { width: "100%", maxWidth: 600, alignSelf: "center", paddingHorizontal: 18, paddingTop: 12, gap: 16, paddingBottom: 28 },
+  panel: { backgroundColor: colors.surface, padding: 18, borderRadius: radii.card, borderWidth: 1, borderColor: colors.line, gap: 12 },
+  intro: { backgroundColor: colors.lilac, borderRadius: radii.cover, padding: 22, gap: 8 },
+  title: { fontSize: 32, fontWeight: "800", letterSpacing: -1.2, color: colors.ink },
   heading: { fontSize: 20, fontWeight: "800", letterSpacing: -0.5, color: colors.ink },
+  fieldLabel: { fontSize: 15, fontWeight: "700", color: colors.ink },
   text: { fontSize: 15, lineHeight: 23, color: colors.muted },
-  input: { borderWidth: 1, borderColor: colors.border, padding: 12, borderRadius: radii.control, minHeight: 48, color: colors.ink, backgroundColor: colors.surface },
-  button: { padding: 12, minHeight: 46, borderRadius: radii.control, backgroundColor: colors.brand, justifyContent: "center", alignItems: "center" },
+  input: { borderWidth: 1, borderColor: colors.border, padding: 12, borderRadius: radii.control, minHeight: 50, fontSize: 16, color: colors.ink, backgroundColor: colors.surface },
+  button: { padding: 12, minHeight: 48, borderRadius: radii.control, backgroundColor: colors.brand, justifyContent: "center", alignItems: "center" },
   outline: { backgroundColor: colors.brandTint },
-  label: { fontSize: 15, color: "white", fontWeight: "700" },
+  label: { fontSize: 15, color: colors.surface, textAlign: "center", fontWeight: "700" },
   outlineLabel: { color: colors.brand },
   error: { color: colors.danger, backgroundColor: colors.dangerTint, padding: 10, borderRadius: radii.control, fontSize: 15, lineHeight: 22 },
-  progress: { padding: 8, flexDirection: "row", gap: 4, borderWidth: 1, borderColor: colors.line,
+  progress: { padding: 14, gap: 8, borderWidth: 1, borderColor: colors.line,
     borderRadius: radii.card, backgroundColor: colors.surface },
-  step: { flex: 1, minHeight: 34, alignItems: "center", flexDirection: "row", gap: 4 },
-  stepNumber: { width: 21, height: 21, borderRadius: 11, backgroundColor: colors.brandTint, justifyContent: "center", alignItems: "center" },
-  stepActive: { backgroundColor: colors.brand },
-  stepText: { fontSize: 11, color: colors.muted, fontWeight: "700" },
-  stepActiveText: { color: colors.brand },
-  stepActiveNumber: { color: colors.surface },
+  progressText: { fontSize: 14, color: colors.brand, fontWeight: "700" },
+  track: { flexDirection: "row", gap: 6 },
+  segment: { flex: 1, height: 5, borderRadius: 4, backgroundColor: colors.line },
+  complete: { backgroundColor: colors.brand },
 });
 
 export function Screen({ children }: { children: ReactNode }) {
-  return <ScrollView style={styles.screen} contentContainerStyle={styles.layout} keyboardShouldPersistTaps="handled">{children}</ScrollView>;
+  return <SafeAreaView style={styles.screen} edges={["bottom", "left", "right"]}>
+    <ScrollView contentContainerStyle={styles.layout} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
+      {children}
+    </ScrollView>
+  </SafeAreaView>;
 }
 export function Panel({ style, ...props }: ViewProps) {
   return <View {...props} style={[styles.panel, style]} />;
@@ -42,11 +47,12 @@ export function Failure({ error }: { error: unknown }) {
 }
 
 export function StepRail({ steps, current }: { steps: string[]; current: number }) {
-  return <View style={styles.progress}>{steps.map((label, index) => <View key={label}
-    accessible accessibilityLabel={label + (current === index ? ", current step" : "")} style={styles.step}>
-    <View style={[styles.stepNumber, current === index && styles.stepActive]}>
-      <Text style={[styles.stepText, current === index && styles.stepActiveNumber]}>{index + 1}</Text>
+  const description = `Step ${current + 1} of ${steps.length} · ${steps[current]}`;
+  return <View accessible accessibilityRole="progressbar" accessibilityLabel="Verification progress"
+    accessibilityValue={{ min: 1, now: current + 1, max: steps.length, text: description }} style={styles.progress}>
+    <Text style={styles.progressText}>{description}</Text>
+    <View style={styles.track}>
+      {steps.map((label, index) => <View key={label} style={[styles.segment, index <= current && styles.complete]} />)}
     </View>
-    <Text style={[styles.stepText, current === index && styles.stepActiveText]}>{label}</Text>
-  </View>)}</View>;
+  </View>;
 }
