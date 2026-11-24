@@ -70,6 +70,12 @@ export type AdvisorResult = {
   status: "answer" | "needs_input" | "no_evidence"; message: string; sources: CatalogItem[];
   tools: ("search_catalog" | "compare_candidates")[]; retrieval: "lexical" | "pgvector"; model_used: boolean;
 };
+export type BuyerChatAnswer = {
+  status: "answer" | "needs_input" | "outside_domain" | "unavailable";
+  message: string;
+  sources: { kind: "help" | "report" | "listing" | "web"; title: string; href: string | null; detail: string | null }[];
+  checked_at: string | null;
+};
 export type DeviceTool = "model_name" | "model_identifier" | "memory_total";
 export type ToolOutcome = "ok" | "unavailable" | "error";
 export type DevicePlan = {

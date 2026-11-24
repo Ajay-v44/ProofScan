@@ -7,10 +7,12 @@ from sqlalchemy import delete, func, select
 from ..auth import DB, Owner
 from ..db import User, now
 from .catalog import CatalogSearch, catalog_view, retrieve, store_item
+from .chat import REFUSAL, build_chat, wants_lowest
+from .guardrails import sensitive_request
 from .models import AgentExecution, CatalogItem
 from .recommendations import AgentContext, recommend
 from .report_index import backfill_owner_reports
-from .schemas import CatalogInput, CatalogView, Question, Recommendation
+from .schemas import CatalogInput, CatalogView, ChatRequest, ChatResponse, Question, Recommendation
 from .telemetry import AgentTrace
 from .usage import record_usage
 
@@ -48,8 +50,7 @@ async def delete_catalog_item(item_id: UUID, owner: Owner, db: DB) -> Response:
     return Response(status_code=204)
 
 
-@router.post("/ask", response_model=Recommendation)
-async def ask(data: Question, owner: Owner, db: DB) -> Recommendation:
+async def start_run(owner: UUID, db: DB) -> AgentTrace:
     await db.scalar(select(User.id).where(User.id == owner).with_for_update())
     moment = now()
     count = await db.scalar(
@@ -62,7 +63,7 @@ async def ask(data: Question, owner: Owner, db: DB) -> Recommendation:
         )
     )
     if (count or 0) >= 30:
-        raise HTTPException(429, "You have reached today's advisor limit.")
+        raise HTTPException(429, "You have reached today's chat limit.")
     run = AgentExecution(
         owner_id=owner,
         kind="recommend",
@@ -73,9 +74,63 @@ async def ask(data: Question, owner: Owner, db: DB) -> Recommendation:
     )
     db.add(run)
     await db.commit()
+    return AgentTrace(run.id, "recommendation")
+
+
+async def available_sources(owner: UUID, db: DB, ids: set[UUID]) -> bool:
+    if not ids:
+        return True
+    available = await db.scalars(
+        select(CatalogItem.id).where(CatalogItem.owner_id == owner, CatalogItem.id.in_(ids))
+    )
+    return set(available) == ids
+
+
+async def finish_run(db: DB, trace: AgentTrace, status: str, state: dict) -> None:
+    run = await db.get_one(AgentExecution, trace.run_id)
+    run.status = status
+    run.state = state
+    await record_usage(db, "buyer_chat", accepted=status == "answer", trace=trace)
+    await db.commit()
+    trace.publish(status)
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(data: ChatRequest, owner: Owner, db: DB) -> ChatResponse:
+    trace = await start_run(owner, db)
+
+    async def search(query: Question, terms: str) -> CatalogSearch:
+        await backfill_owner_reports(db, owner)
+        await db.commit()
+        return await retrieve(owner, query, terms, db, lowest_first=wants_lowest(query))
+
+    async def still_owned(ids: set[UUID]) -> bool:
+        return await available_sources(owner, db, ids)
+
+    try:
+        answer = await build_chat(data, trace, search, still_owned)
+    except HTTPException:
+        await db.rollback()
+        await finish_run(db, trace, "unavailable", {})
+        raise
+    await finish_run(
+        db, trace, answer.status, {"workflow": "chat", "steps": [event.name for event in trace.events]}
+    )
+    return answer
+
+
+@router.post("/ask", response_model=Recommendation)
+async def ask(data: Question, owner: Owner, db: DB) -> Recommendation:
+    trace = await start_run(owner, db)
+    if sensitive_request(data.question):
+        await finish_run(db, trace, "needs_input", {})
+        return Recommendation(
+            status="needs_input", message=REFUSAL, retrieval="lexical", model_used=False
+        )
+    if data.previous_question and sensitive_request(data.previous_question):
+        data = data.model_copy(update={"previous_question": None})
     await backfill_owner_reports(db, owner)
     await db.commit()
-    trace = AgentTrace(run.id, "recommendation")
 
     async def search(query: str) -> CatalogSearch:
         return await retrieve(owner, data, query, db)
@@ -84,19 +139,11 @@ async def ask(data: Question, owner: Owner, db: DB) -> Recommendation:
         answer = await recommend(AgentContext(data, search, trace))
     except HTTPException:
         await db.rollback()
-        stored = await db.get(AgentExecution, trace.run_id)
-        if stored is not None:
-            stored.status = "unavailable"
-        await record_usage(db, "buyer_chat", accepted=False, trace=trace)
-        await db.commit()
-        trace.publish("unavailable")
+        await finish_run(db, trace, "unavailable", {})
         raise
     if answer.sources:
         source_ids = {source.id for source in answer.sources}
-        available = await db.scalars(
-            select(CatalogItem.id).where(CatalogItem.owner_id == owner, CatalogItem.id.in_(source_ids))
-        )
-        if set(available) != source_ids:
+        if not await available_sources(owner, db, source_ids):
             answer = Recommendation(
                 status="needs_input",
                 message="Your available evidence changed during this comparison. Ask again to use the latest reports.",
@@ -104,9 +151,10 @@ async def ask(data: Question, owner: Owner, db: DB) -> Recommendation:
                 retrieval=answer.retrieval,
                 model_used=answer.model_used,
             )
-    run = await db.get_one(AgentExecution, trace.run_id)
-    run.status = answer.status
-    run.state = {"tools": answer.tools, "model_used": answer.model_used, "retrieval": answer.retrieval}
-    await record_usage(db, "buyer_chat", accepted=answer.status == "answer", trace=trace)
-    trace.publish(answer.status)
+    await finish_run(
+        db,
+        trace,
+        answer.status,
+        {"tools": answer.tools, "model_used": answer.model_used, "retrieval": answer.retrieval},
+    )
     return answer

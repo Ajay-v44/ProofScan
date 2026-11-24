@@ -119,7 +119,9 @@ async def write_vector(db: AsyncSession, item_id: UUID, embedding: str) -> None:
     )
 
 
-async def retrieve(owner: UUID, question: Question, search_text: str, db: AsyncSession) -> CatalogSearch:
+async def retrieve(
+    owner: UUID, question: Question, search_text: str, db: AsyncSession, *, lowest_first: bool = False
+) -> CatalogSearch:
     terms = [term for term in re.findall(r"[^\W_]{2,32}", search_text.lower()) if term not in STOP_WORDS]
     terms = list(dict.fromkeys(terms))[:20]
     measurement = requested_measurement(question)
@@ -131,6 +133,7 @@ async def retrieve(owner: UUID, question: Question, search_text: str, db: AsyncS
         "terms": " | ".join(terms),
         "limit": SEARCH_LIMIT,
         "metric": measurement[0] if measurement else None,
+        "lowest_first": lowest_first,
         "reports_only": question.reports_only,
     }
     if settings().agent_vector_enabled:
@@ -170,7 +173,10 @@ REPORT_JOINS = """
         LEFT JOIN report_signatures signature ON signature.report_id = report.id
         LEFT JOIN report_invalidations invalidation ON invalidation.report_id = report.id
 """
-NUMERIC_ORDER = "CAST(item.facts ->> CAST(:metric AS text) AS integer) DESC NULLS LAST"
+NUMERIC_ORDER = """
+    CASE WHEN :lowest_first THEN CAST(item.facts ->> CAST(:metric AS text) AS integer) END ASC NULLS LAST,
+    CASE WHEN NOT :lowest_first THEN CAST(item.facts ->> CAST(:metric AS text) AS integer) END DESC NULLS LAST
+"""
 
 
 async def semantic_search(

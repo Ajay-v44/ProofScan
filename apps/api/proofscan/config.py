@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     kimi_vision_model: str = ""
     agent_model: str = "kimi-k3"
     agent_test_model: str = "kimi-k2.6"
+    agent_review_model: str = "kimi-k2.6"
     agent_vector_enabled: bool = False
     agent_embedding_cache: Path = Path("./.agent-cache")
     langfuse_base_url: str = "https://cloud.langfuse.com"

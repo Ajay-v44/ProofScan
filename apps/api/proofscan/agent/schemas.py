@@ -78,6 +78,33 @@ class Recommendation(BaseModel):
     model_used: bool
 
 
+ChatText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
+Market = Literal["IN", "US", "GB"]
+
+
+class ChatRequest(Input):
+    message: ChatText
+    history: list[ChatText] = Field(default_factory=list, max_length=4)
+    market: Market = "IN"
+    include_listings: bool = False
+    allow_web: bool = True
+    allow_model: bool = False
+
+
+class ChatSource(BaseModel):
+    kind: Literal["help", "report", "listing", "web"]
+    title: str
+    href: str | None = None
+    detail: str | None = None
+
+
+class ChatResponse(BaseModel):
+    status: Literal["answer", "needs_input", "outside_domain", "unavailable"]
+    message: str
+    sources: list[ChatSource] = Field(default_factory=list)
+    checked_at: str | None = None
+
+
 DeviceTool = Literal["model_name", "model_identifier", "memory_total"]
 ToolStatus = Literal["ok", "unavailable", "error"]
 MobilePlatform = Literal["android", "ios"]

@@ -848,6 +848,24 @@ async def test_purchase_views_pickup_and_private_report_retrieval(clients, monke
             verification,
         ]
         assert "ranks highest for recorded memory" in ranked.json()["message"]
+        free_text = {"message": "Which of my devices has the most memory?", "allow_model": True}
+        scoped = await buyer.post("/api/v1/agent/chat", json=free_text)
+        assert scoped.is_success, scoped.text
+        assert [item["href"] for item in scoped.json()["sources"]] == [
+            f"/reports/{alternative}",
+            f"/reports/{verification}",
+        ]
+        assert "highest recorded memory" in scoped.json()["message"]
+        assert "example.test" not in scoped.text
+        followup = await buyer.post(
+            "/api/v1/agent/chat",
+            json={"message": "What about the least?", "history": [free_text["message"]]},
+        )
+        assert followup.json()["sources"][0]["href"] == f"/reports/{verification}"
+        assert "lowest recorded memory" in followup.json()["message"]
+        unauthorized = await other.post("/api/v1/agent/chat", json=free_text)
+        assert unauthorized.json()["status"] == "needs_input"
+        assert not unauthorized.json()["sources"]
         route = f"/api/v1/verifications/{verification}/recheck"
         assert (await other.post(route, json={})).status_code == 404
         pickup = await buyer.post(route, json={})
@@ -876,6 +894,8 @@ async def test_purchase_views_pickup_and_private_report_retrieval(clients, monke
         ).status_code == 204
         remaining = (await buyer.post("/api/v1/agent/ask", json=question)).json()["sources"]
         assert [item["verification_id"] for item in remaining] == [alternative]
+        current = (await buyer.post("/api/v1/agent/chat", json=free_text)).json()
+        assert [item["href"] for item in current["sources"]] == [f"/reports/{alternative}"]
         assert (
             await seller.post(next_path + "/decision", json={"decision": "share"})
         ).status_code == 404
