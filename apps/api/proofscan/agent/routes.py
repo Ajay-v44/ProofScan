@@ -6,11 +6,13 @@ from sqlalchemy import delete, func, select
 
 from ..auth import DB, Owner
 from ..db import User, now
-from .catalog import catalog_view, retrieve, store_item
+from .catalog import CatalogSearch, catalog_view, retrieve, store_item
 from .models import AgentExecution, CatalogItem
 from .recommendations import AgentContext, recommend
+from .report_index import backfill_owner_reports
 from .schemas import CatalogInput, CatalogView, Question, Recommendation
 from .telemetry import AgentTrace
+from .usage import record_usage
 
 router = APIRouter(prefix="/agent", tags=["device advisor"])
 
@@ -21,7 +23,7 @@ async def list_catalog(owner: Owner, db: DB, offset: int = 0) -> list[CatalogVie
         raise HTTPException(422, "Offset must be nonnegative.")
     items = await db.scalars(
         select(CatalogItem)
-        .where(CatalogItem.owner_id == owner)
+        .where(CatalogItem.owner_id == owner, CatalogItem.report_id.is_(None))
         .order_by(CatalogItem.created_at.desc(), CatalogItem.id.desc())
         .offset(offset)
         .limit(30)
@@ -38,7 +40,7 @@ async def create_catalog_item(data: CatalogInput, owner: Owner, db: DB) -> Catal
 async def delete_catalog_item(item_id: UUID, owner: Owner, db: DB) -> Response:
     removed = await db.scalar(
         delete(CatalogItem)
-        .where(CatalogItem.id == item_id, CatalogItem.owner_id == owner)
+        .where(CatalogItem.id == item_id, CatalogItem.owner_id == owner, CatalogItem.report_id.is_(None))
         .returning(CatalogItem.id)
     )
     if removed is None:
@@ -71,9 +73,11 @@ async def ask(data: Question, owner: Owner, db: DB) -> Recommendation:
     )
     db.add(run)
     await db.commit()
+    await backfill_owner_reports(db, owner)
+    await db.commit()
     trace = AgentTrace(run.id, "recommendation")
 
-    async def search(query: str) -> list[CatalogView]:
+    async def search(query: str) -> CatalogSearch:
         return await retrieve(owner, data, query, db)
 
     try:
@@ -83,10 +87,26 @@ async def ask(data: Question, owner: Owner, db: DB) -> Recommendation:
         stored = await db.get(AgentExecution, trace.run_id)
         if stored is not None:
             stored.status = "unavailable"
-            await db.commit()
+        await record_usage(db, "buyer_chat", accepted=False, trace=trace)
+        await db.commit()
         trace.publish("unavailable")
         raise
+    if answer.sources:
+        source_ids = {source.id for source in answer.sources}
+        available = await db.scalars(
+            select(CatalogItem.id).where(CatalogItem.owner_id == owner, CatalogItem.id.in_(source_ids))
+        )
+        if set(available) != source_ids:
+            answer = Recommendation(
+                status="needs_input",
+                message="Your available evidence changed during this comparison. Ask again to use the latest reports.",
+                tools=answer.tools,
+                retrieval=answer.retrieval,
+                model_used=answer.model_used,
+            )
+    run = await db.get_one(AgentExecution, trace.run_id)
     run.status = answer.status
     run.state = {"tools": answer.tools, "model_used": answer.model_used, "retrieval": answer.retrieval}
+    await record_usage(db, "buyer_chat", accepted=answer.status == "answer", trace=trace)
     trace.publish(answer.status)
     return answer

@@ -1,8 +1,11 @@
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 
+from .agent.models import CatalogItem
+from .agent.usage import usage_totals
 from .auth import DB, Admin, Owner
 from .db import (
     AgentRun,
@@ -20,7 +23,14 @@ from .db import (
     now,
 )
 from .domain import TRANSITIONS, Status
-from .handoff_models import Asset, Checkpoint, Comparison, ComparisonInvalidation, Handoff
+from .handoff_models import (
+    Asset,
+    Checkpoint,
+    CheckpointPhoto,
+    Comparison,
+    ComparisonInvalidation,
+    Handoff,
+)
 from .schemas import AdminReason, ReportPayload, SignedReport, VerificationResult, VerificationView
 from .services import advance, signer
 from .signing import Signature, encode
@@ -28,6 +38,13 @@ from .verification import view
 
 router = APIRouter(tags=["reports"])
 admin_router = APIRouter(prefix="/admin", tags=["operator"])
+
+
+@admin_router.get("/agent-usage")
+async def agent_usage(_: Admin, db: DB) -> dict:
+    ending = now().date()
+    start = ending - timedelta(days=29)
+    return {"start": start, "end": ending, "workflows": await usage_totals(db, start)}
 
 
 async def signed_report(db: DB, report_id: UUID) -> tuple[Report, Signature, bool]:
@@ -74,12 +91,20 @@ async def owner_report(verification_id: UUID, user: Owner, db: DB) -> SignedRepo
     if report_id is None:
         raise HTTPException(404, "Shared report not found.")
     report, signature, invalidated = await signed_report(db, report_id)
+    payload = ReportPayload.model_validate(report.payload)
+    baseline_valid = None
+    if payload.pickup is not None:
+        try:
+            baseline_valid = (await public_verify(payload.pickup.baseline_report_id, db)).valid
+        except HTTPException:
+            baseline_valid = False
     return SignedReport(
-        payload=ReportPayload.model_validate(report.payload),
+        payload=payload,
         digest=signature.digest,
         signature=signature.value,
         key_id=signature.key_id,
         valid=not invalidated and signer().verify(report.payload, signature),
+        baseline_valid=baseline_valid,
     )
 
 
@@ -129,6 +154,9 @@ async def metrics(_: Admin, db: DB) -> dict:
     checkpoint_bytes = await db.scalar(
         select(func.coalesce(func.sum(func.octet_length(Checkpoint.jpeg)), 0))
     )
+    angled_bytes = await db.scalar(
+        select(func.coalesce(func.sum(func.octet_length(CheckpointPhoto.jpeg)), 0))
+    )
     mismatches = await db.scalar(
         select(func.count())
         .select_from(AgentStep)
@@ -148,7 +176,7 @@ async def metrics(_: Admin, db: DB) -> dict:
         ],
         "agent_runs": await db.scalar(select(func.count(AgentRun.id))),
         "listing_mismatch_scans": mismatches,
-        "evidence_bytes": (evidence_bytes or 0) + (checkpoint_bytes or 0),
+        "evidence_bytes": (evidence_bytes or 0) + (checkpoint_bytes or 0) + (angled_bytes or 0),
         "model": {
             "requests": model[0],
             "accepted": model[1],
@@ -216,6 +244,7 @@ async def invalidate(report_id: UUID, data: AdminReason, admin: Admin, db: DB) -
     _, _, invalidated = await signed_report(db, report_id)
     if not invalidated:
         db.add(Invalidation(report_id=report_id))
+        await db.execute(delete(CatalogItem).where(CatalogItem.report_id == report_id))
         db.add(
             Audit(actor_id=admin, action="invalidate_report", target_id=report_id, reason=data.reason)
         )

@@ -30,6 +30,7 @@ export default function Layout() {
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="scanner" options={{ title: "Device scanner" }} />
       <Stack.Screen name="seller" options={{ title: "Seller verification" }} />
+      <Stack.Screen name="about" options={{ title: "About ProofScan" }} />
       <Stack.Screen name="privacy" options={{ title: "Privacy" }} />
     </Stack>
   </QueryClientProvider>;

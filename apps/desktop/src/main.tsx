@@ -1,12 +1,14 @@
 import "@fontsource-variable/manrope";
 import { themeVariables } from "@proofscan/design-tokens";
 import { invoke } from "@tauri-apps/api/core";
-import { CircleCheck, Download, LayoutGrid, ScanLine, Upload } from "lucide-react";
-import { useState, type CSSProperties } from "react";
+import { CircleCheck, Download, LayoutGrid, Upload } from "lucide-react";
+import { useRef, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
+import { version } from "../src-tauri/tauri.conf.json";
 import "./style.css";
 
 type Scan = { hardware: { manufacturer: string | null; model: string | null; memory_gib: number | null; cpu: string[] }; challenge: string };
+const brandImage = new URL("../src-tauri/icons/icon.png", import.meta.url).href;
 
 function Collector() {
   const [ticket, setTicket] = useState<File | null>(null);
@@ -14,6 +16,7 @@ function Collector() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const about = useRef<HTMLDialogElement>(null);
 
   function choose(file: File | null) {
     setTicket(file);
@@ -53,7 +56,7 @@ function Collector() {
 
   return <div className="desktop" style={themeVariables as CSSProperties}>
     <header className="topbar">
-      <span className="brand"><span className="brand-mark"><ScanLine size={20} aria-hidden /></span>ProofScan</span>
+      <span className="brand"><img className="brand-mark" src={brandImage} width="36" height="36" alt="" />ProofScan</span>
       <button className="quiet" type="button" onClick={() => void workspace()}><LayoutGrid size={17} aria-hidden />Workspace</button>
     </header>
     <main>
@@ -86,6 +89,17 @@ function Collector() {
         <button type="button" onClick={exportScan}><Download size={17} aria-hidden />Export scan</button>
       </section>}
     </main>
+    <footer className="collector-footer">
+      <button className="quiet" type="button" onClick={() => about.current?.showModal()}>About ProofScan</button>
+      <span>Collector version {version}</span>
+    </footer>
+    <dialog ref={about} aria-labelledby="collector-about-title" className="collector-about">
+      <div className="collector-identity"><img className="brand-mark" src={brandImage} width="44" height="44" alt="" />
+        <div><h2 id="collector-about-title">ProofScan Collector</h2><p>Version {version}</p></div>
+      </div>
+      <p>Use a scan ticket from the seller page to read the supported hardware on this device. Export the scan and review it in your ProofScan workspace before sharing.</p>
+      <form method="dialog"><button className="quiet">Close</button></form>
+    </dialog>
   </div>;
 }
 

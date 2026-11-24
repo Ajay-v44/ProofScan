@@ -1,29 +1,33 @@
 # ProofScan agents
 
-**Device advisor** compares devices in a signed-in user’s private catalog. **Guided scan** selects approved local device checks in Expo. The deterministic inspection graph still compares measurements and listing claims. The verification service controls consent, sharing, and signatures.
+**Buyer chat** compares the signed reports shared with a buyer and can include that buyer’s saved listings. **Guided scan** selects approved local device checks in Expo. The verification service controls consent, report sharing, and signatures.
 
 ```mermaid
 flowchart LR
-    Web[Device advisor] --> API[FastAPI]
+    Web[Buyer chat in web and app] --> API[FastAPI]
     Mobile[Expo guided scan] --> API
     API --> Graph[LangGraph tool loop]
     Graph --> Catalog[(Owner-scoped PostgreSQL and pgvector)]
     API --> Plan[(Device approval and checkpoint)]
     Plan --> Mobile
     Mobile --> Readers[Read-only native device tools]
-    Graph -->|With user permission| Kimi[Moonshot Kimi]
+    Graph -->|Approved structured facts| Kimi[Moonshot Kimi]
+    API --> Usage[(Daily usage totals)]
+    Usage --> Ops[ProofScan operator dashboard]
     API -->|Tool outcomes only| Kimi
     API -->|Metadata only| Langfuse[Langfuse]
 ```
 
-## Device advisor
+## Buyer chat
 
-1. Open **Device advisor** at `/advisor` and sign in.
-2. Add the devices you are considering, along with specifications or listing notes. You can record the listed price, currency, and a public HTTPS source URL.
-3. Ask a question, such as “Which phone in my catalog should I consider for long battery life?” Choose a category and optionally enter a budget and currency.
-4. Check the Moonshot consent box if you want an answer from the model using this question and the relevant catalog excerpts. Otherwise the app ranks candidates locally. When the assistant asks for a detail, update the question and submit it again.
+1. Open **Buyer chat** in the web or app workspace and sign in. The default pool is the signed reports sellers shared with your account.
+2. Ask a question such as “Which of these phones has the healthiest battery?” Choose a category and, if relevant, a budget and currency. If you want to include your own listings, select **Include saved listings**.
+3. Open the cited reports to review the measurements and exterior evidence. Local ranking can order results by measured battery health, memory or storage and calls out missing measurements. A follow-up can refine the last question. The transcript stays in the current client session.
+4. Opt into Moonshot for structured comparison. Local ranking is available by default.
 
-The advisor cites catalog evidence and its recorded prices. You can enter specifications from a signed report or retailer listing. Market-wide coverage, real-time prices, and automatic ingestion of private reports are outside this catalog workflow.
+Sharing creates the searchable report entry in the same database transaction. Existing valid shared reports are backfilled in batches when their owner first uses chat. Pending, declined, simulated and invalidated reports are excluded. Invalidating a report removes the entry and its vector. Budget filtering uses the upper bound of a stored comparable price estimate when available. Inspect the source report for the full estimate or an explanation of missing data.
+
+The automatic index contains a scrubbed manufacturer and model, the device category, measured RAM, storage and battery health when available, claim mismatch and photo counts, and any supported price estimate. It excludes the report label and notes, identifiers, images, and guest links. Moonshot receives predefined preference labels and structured comparison facts after opt-in. Free-text questions, listing text, private URLs and photos stay inside ProofScan. The private report remains governed by the buyer’s existing account authorization.
 
 ### Reasoning, actions, and safeguards
 
@@ -31,14 +35,20 @@ The LangGraph ReAct loop alternates between a typed decision and a tool observat
 
 | Action | Application policy |
 | --- | --- |
-| `search_catalog` | The model may suggest terms. PostgreSQL binds the signed-in owner, device category, currency, and budget. |
+| `search_catalog` | The application always runs it first. PostgreSQL binds the signed-in owner, evidence source, device category, currency, and budget before ranking. |
 | `compare_candidates` | Compares records already retrieved within the current request. |
-| `recommend` | Requires retrieved evidence and returns citations from that evidence. |
-| `clarify` | Pauses for the user to provide more information. |
+| `recommend` | Accepts only candidate numbers from the current retrieval. ProofScan writes the explanation from the recorded measurements and applies deterministic numeric ranking for a requested measurement. |
+| `clarify` | Offers a fixed prompt for the user to identify a priority. |
 
-The provider boundary enforces explicit approval, a ten-second timeout per call, a 24-second decision window, output limits, and a maximum of three calls per recommendation. Unsupported actions, invalid source references, and provider errors use deterministic fallback behavior. A PostgreSQL quota reservation is committed before contacting Moonshot. Execution records contain status and tool metadata. The hourly worker clears older execution records.
+The provider boundary enforces explicit approval, a ten-second timeout per call, a 24-second decision window, and output limits. Buyer Chat can make up to two model calls after it retrieves evidence, to compare or select candidates. Unsupported actions, invalid source references, and provider errors use deterministic fallback behavior. A PostgreSQL quota reservation is committed before contacting Moonshot. Execution records contain status and tool metadata. The hourly worker clears older execution records.
 
-Text mode uses PostgreSQL lexical ranking. Semantic mode stores 384-dimensional FastEmbed vectors in pgvector. It applies ownership and price filters before exact cosine similarity, then adds a lexical signal. Existing catalog entries can be reindexed when semantic mode is activated. [pgvector filtering and exact search](https://github.com/pgvector/pgvector#filtering) · [FastEmbed model list](https://qdrant.github.io/fastembed/examples/Supported_Models/)
+Text mode uses PostgreSQL lexical ranking. Semantic mode stores 384-dimensional FastEmbed vectors in pgvector. It filters eligible records before exact cosine similarity and combines that score with a lexical signal. New report vectors are built locally during retrieval in bounded batches. The reindex command also fills missing vectors. [pgvector filtering and exact search](https://github.com/pgvector/pgvector#filtering) · [FastEmbed model list](https://qdrant.github.io/fastembed/examples/Supported_Models/)
+
+## Capture guidance and operator usage
+
+New purchase checks require internal readings and clear front and back photos. The buyer can create a private pickup recheck from the original signed report. At handoff and return, ProofScan suggests the next view, checks uploaded photo quality and shows matching-angle feedback. See the [capture and recheck walkthrough](../ux/flows.md#picture-guidance-and-pickup-rechecks).
+
+The operator dashboard shows totals over the latest 30 UTC days for requests, completed responses or checks, model calls, and token usage. The breakdown covers buyer chat, guided device checks, purchase photos and handoff photos. The daily counters contain no account identifiers, questions, model responses or images. Operator access requires the existing admin role. The dashboard works with Langfuse disabled.
 
 ## Guided scan
 
@@ -65,7 +75,7 @@ uv run --no-sync python -m proofscan.agent probe
 
 ### Semantic retrieval on host PostgreSQL
 
-Install pgvector for your PostgreSQL major version. Provision it in the same database after applying Alembic. The provisioning SQL expects the extension in `public` and resolves the catalog using the configured database search path. Use a migration role for the SQL and grant the app role the permissions it needs for the catalog, vectors, and execution records.
+Install pgvector for your PostgreSQL major version. Provision it in the same database after applying Alembic. The provisioning SQL expects the extension in `public` and resolves the catalog using the configured database search path. If the API and worker use roles separate from the table owner, configure database grants and row-level policies for those server roles on the protected tables they use. Keep the browser-facing roles excluded.
 
 ```sh
 uv sync --locked --extra agent --python 3.12 --no-install-project
@@ -75,7 +85,7 @@ uv run --no-sync python -m proofscan.agent warm
 uv run --no-sync python -m proofscan.agent reindex
 ```
 
-The last two commands need `PYTHONPATH=apps/api`. `warm` caches the public `BAAI/bge-small-en-v1.5` embedding model in `AGENT_EMBEDDING_CACHE` and runs a synthetic inference. `reindex` backfills existing catalog entries. Set `AGENT_VECTOR_ENABLED=true` and restart the API. If semantic mode is enabled without its model or database table, the advisor reports a service error.
+The last two commands need `PYTHONPATH=apps/api`. `warm` caches the public `BAAI/bge-small-en-v1.5` embedding model in `AGENT_EMBEDDING_CACHE` and runs a synthetic inference. `reindex` backfills existing catalog entries. Set `AGENT_VECTOR_ENABLED=true` and restart the API. If the model or vector table is unavailable, Buyer Chat uses text ranking with the same access and budget filters. The response reports the ranking mode used.
 
 ### Semantic retrieval with Compose
 
@@ -102,7 +112,9 @@ Telemetry carries execution ID, model, token counts, tool, outcome, and duration
 | `GET /api/v1/agent/catalog` | List private catalog entries, 30 per page using `offset`. |
 | `POST /api/v1/agent/catalog` | Add an owned catalog entry and its vector when enabled. |
 | `DELETE /api/v1/agent/catalog/{id}` | Remove an owned entry and its vector. |
-| `POST /api/v1/agent/ask` | Ask with optional budget and explicit model permission. |
+| `POST /api/v1/agent/ask` | Ask with an optional budget, report-only filter, previous question and explicit model permission. |
+| `GET /api/v1/admin/agent-usage` | Read 30 UTC days of aggregate usage as an operator. |
+| `POST /api/v1/verifications/{verification_id}/recheck` | Create an owner-only private pickup check from a valid device report. |
 | `POST /api/v1/guest/{verification_id}/agent/plan` | Pause for approval on an active mobile scan. |
 | `POST /api/v1/guest/{verification_id}/agent/plan/{id}` | Submit approval, skip, or report the last tool outcome with the current revision. |
 

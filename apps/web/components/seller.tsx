@@ -1,6 +1,6 @@
 "use client";
 
-import { api, type FunctionalCheck, type GuestView, type ScanTicket } from "@proofscan/api-client";
+import { api, type CaptureLink, type FunctionalCheck, type GuestView, type ScanTicket } from "@proofscan/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Download, Laptop2, LockKeyhole, ScanLine, Upload } from "lucide-react";
 import Link from "next/link";
@@ -29,6 +29,7 @@ export function Seller({ id }: { id: string }) {
   const [desktop, setDesktop] = useState<"windows" | "macos">("windows");
   const [file, setFile] = useState<File | null>(null);
   const [checks, setChecks] = useState<FunctionalCheck[]>([]);
+  const [copied, setCopied] = useState(false);
 
   const guest = useQuery({
     queryKey: key,
@@ -46,6 +47,8 @@ export function Seller({ id }: { id: string }) {
     mutationFn: () => api<ScanTicket>(path + "/scan", { platform: desktop }),
     onSuccess: next => { setTicket(next); setFile(null); downloadTicket(next); },
   });
+  const camera = useMutation({ mutationFn: () => api<CaptureLink>(path + "/photo-link", {}), gcTime: 0,
+    onSuccess: () => setCopied(false) });
   const simulate = useMutation({
     mutationFn: async (fixture: "verified" | "misrepresented") => {
       const scan = await api<ScanTicket>(path + "/scan", { platform: "simulator" });
@@ -77,14 +80,17 @@ export function Seller({ id }: { id: string }) {
   const step = status === "COMPLETED" || status === "DECLINED" ? 3 : status === "SELLER_REVIEW" ? 2 : scanning ? 1 : 0;
 
   const claims = guest.data?.claims;
+  const isPickup = guest.data?.verification.is_pickup === true;
+  const needsExterior = guest.data?.verification.require_exterior === true;
+  const missingExterior = needsExterior && !["front", "back"].every(angle => guest.data?.photos.some(photo => photo.angle === angle));
   const advertised = [
     { label: "Memory", value: claims?.memory_gib, unit: " GiB" },
     { label: "Largest drive", value: claims?.storage_gb, unit: " GB" },
     { label: "Minimum battery health", value: claims?.battery_percent, unit: "%" },
   ].filter(item => item.value != null);
 
-  return <PublicShell wide>
-    <div className="page-title"><span className="eyebrow"><LockKeyhole aria-hidden size={15} /> Private seller session</span>
+  return <PublicShell wide isGuest>
+    <div className="page-title"><span className="eyebrow"><LockKeyhole aria-hidden size={15} /> {isPickup ? "Private pickup check" : "Private seller session"}</span>
       <h1>{guest.data?.verification.label ?? "Device verification"}</h1>
     </div>
     {guest.isPending && <p className="notice" role="status">Opening seller session…</p>}
@@ -95,17 +101,18 @@ export function Seller({ id }: { id: string }) {
         <div className="flow-content">
       {status === "SELLER_OPENED" && <section className="panel form">
         <div className="icon-tile mint"><LockKeyhole size={22} aria-hidden /></div>
-        <div><h2>Review what we collect</h2><p>The collector reads device information such as model, processor and memory. You can also add photos of the device exterior.</p></div>
-        <label className="checkbox"><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} />I agree to collect these hardware readings for this verification.</label>
+        <div><h2>Review what we collect</h2><p>The collector reads device information such as model, processor and memory. {needsExterior ? "The scan also requires clear photos of the front and back." : "You can also add exterior photos."}</p></div>
+        <label className="checkbox"><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} />I agree to collect these readings and exterior evidence for this verification.</label>
         <Button onClick={() => consent.mutate()} disabled={!accepted || busy}>Agree and continue</Button>
       </section>}
       {scanning && <section className="panel form">
         <div className="icon-tile mint"><Laptop2 size={22} aria-hidden /></div>
-        <div><h2>Collect desktop readings</h2><p>Use the device you are selling. The scan ticket expires after 15 minutes. For Android and iOS, open the original seller link in the mobile scanner.</p></div>
+        <div><h2>Collect desktop readings</h2><p>{isPickup ? "Run this check on the device in your hands." : "Use the device you are selling."} The scan ticket lasts 15 minutes. On Android or iOS, open the original link in the ProofScan scanner.</p></div>
         <div className="flow-section">
         <label>Desktop platform<select value={desktop} onChange={event => {
           setDesktop(event.target.value as "windows" | "macos");
           setTicket(null);
+          camera.reset();
           setFile(null);
         }}><option value="windows">Windows</option><option value="macos">macOS</option></select></label>
         <div className="actions"><Button onClick={() => windows.mutate()} disabled={busy}><Download size={17} aria-hidden />{ticket ? "Download a fresh ticket" : "Download scan ticket"}</Button>
@@ -117,13 +124,26 @@ export function Seller({ id }: { id: string }) {
         </details>
         </div>
         <div className="flow-section">
-          <h3>Optional checks</h3>
-          {ticket && <PhotoCapture path={path} ticket={ticket} photos={guest.data.photos} onSaved={() => client.invalidateQueries({ queryKey: key })} />}
+          <h3>Exterior and functional checks</h3>
+          {!ticket && <p>Download a scan ticket to start collecting exterior photos.</p>}
+          {ticket && <PhotoCapture path={path} ticket={ticket} photos={guest.data.photos} required={needsExterior} onSaved={() => client.invalidateQueries({ queryKey: key })} />}
+          {ticket && <details><summary>Use another camera</summary><div className="form">
+            <p>Open a camera link on another phone or tablet. It lasts up to 15 minutes.</p>
+            <div className="actions"><Button variant="outline" disabled={camera.isPending} onClick={() => camera.mutate()}>{camera.data ? "Replace camera link" : "Create camera link"}</Button>
+              {camera.data && <Button variant="quiet" onClick={() => void guest.refetch()} disabled={guest.isFetching}>Refresh photos</Button>}</div>
+            {camera.data && <><label>Camera link<input readOnly value={camera.data.url} onFocus={event => event.currentTarget.select()} /></label>
+              <Button variant="quiet" onClick={async () => {
+                try { await navigator.clipboard.writeText(camera.data.url); setCopied(true); }
+                catch { setCopied(false); }
+              }}>{copied ? "Copied" : "Copy camera link"}</Button></>}
+            <ErrorNote error={camera.error} />
+          </div></details>}
           <FunctionalChecks checks={checks} onChange={setChecks} />
         </div>
         <form className="form" onSubmit={event => { event.preventDefault(); if (file) upload.mutate(file); }}>
           <label>{desktop === "windows" ? "Windows" : "macOS"} scan file<input key={desktop + (ticket?.challenge ?? "restored")} type="file" accept=".json,application/json" onChange={event => setFile(event.target.files?.[0] ?? null)} required /></label>
-          <Button type="submit" variant="outline" disabled={!file || busy}><Upload size={17} aria-hidden />Preview scan</Button>
+          {missingExterior && <p>Add front and back photos to preview this scan.</p>}
+          <Button type="submit" variant="outline" disabled={!file || busy || missingExterior}><Upload size={17} aria-hidden />Preview scan</Button>
         </form>
         {guest.data.simulator_enabled && <div className="simulator"><strong>Simulator</strong><p>These fixtures produce a report marked SIMULATED DATA.</p>
           <div className="actions"><Button variant="outline" disabled={busy} onClick={() => simulate.mutate("verified")}>Use matching device</Button><Button variant="outline" disabled={busy} onClick={() => simulate.mutate("misrepresented")}>Use mismatched device</Button></div>
@@ -137,6 +157,9 @@ export function Seller({ id }: { id: string }) {
       {status === "COMPLETED" && <section className="panel form"><div className="icon-tile mint"><CheckCircle2 size={24} aria-hidden /></div><div><h2>Report shared</h2><p>The buyer can open the signed report from their workspace.</p></div>
         {guest.data.report_id && <Link className="quiet-link" href={"/verify/" + guest.data.report_id}>Check report signature</Link>}</section>}
       {status === "DECLINED" && <section className="panel form"><span className="icon-tile"><ScanLine size={24} aria-hidden /></span><div><h2>Sharing declined</h2><p>The buyer received your decision. Your scan details stayed private.</p></div><Status value={status} /></section>}
+      {(status === "EXPIRED" || status === "CANCELLED" || status === "FAILED") && <section className="panel form">
+        <h2>Verification unavailable</h2><p>Ask the buyer to create a fresh link.</p>
+      </section>}
         </div>
         <aside className="flow-aside">
           {advertised.length > 0 && <section className="panel"><h2>From the listing</h2>

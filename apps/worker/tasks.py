@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from proofscan.agent.models import AgentExecution
 from proofscan.config import settings
-from proofscan.db import Evidence, Verification, database, now
+from proofscan.db import CaptureLink, Evidence, Verification, database, now
 from proofscan.domain import TRANSITIONS, Status
-from proofscan.handoff_models import Checkpoint
+from proofscan.handoff_models import Checkpoint, CheckpointPhoto
 from proofscan.services import advance
 
 celery = Celery("proofscan", broker=settings().redis_url)
@@ -78,7 +78,7 @@ def expire_verifications() -> int:
 
 
 def photo_purge_batch(
-    model: type[Evidence] | type[Checkpoint],
+    model: type[Evidence] | type[Checkpoint] | type[CheckpointPhoto],
     expiry: SQLColumnExpression[datetime | None],
     cutoff: datetime,
 ) -> Update:
@@ -90,7 +90,10 @@ def photo_purge_batch(
         .limit(BATCH_SIZE)
         .cte()
     )
-    return update(model).where(model.id.in_(select(due.c.id))).values(jpeg=None)
+    cleared = {"jpeg": None}
+    if model is not Checkpoint:
+        cleared["descriptor"] = None
+    return update(model).where(model.id.in_(select(due.c.id))).values(**cleared)
 
 
 async def purge_evidence() -> int:
@@ -107,8 +110,23 @@ async def purge_evidence() -> int:
                 evidence = await connection.execute(
                     photo_purge_batch(Evidence, Evidence.expires_at, cutoff)
                 )
-            total += checkpoints.rowcount + evidence.rowcount
-            if max(checkpoints.rowcount, evidence.rowcount) < BATCH_SIZE or monotonic() >= deadline:
+                views = await connection.execute(
+                    photo_purge_batch(CheckpointPhoto, CheckpointPhoto.expires_at, cutoff)
+                )
+                due_links = (
+                    select(CaptureLink.scan_id)
+                    .where(CaptureLink.expires_at <= cutoff)
+                    .order_by(CaptureLink.expires_at, CaptureLink.scan_id)
+                    .with_for_update(skip_locked=True)
+                    .limit(BATCH_SIZE)
+                    .cte()
+                )
+                links = await connection.execute(
+                    delete(CaptureLink).where(CaptureLink.scan_id.in_(select(due_links.c.scan_id)))
+                )
+            counts = [checkpoints.rowcount, evidence.rowcount, views.rowcount, links.rowcount]
+            total += sum(counts)
+            if max(counts) < BATCH_SIZE or monotonic() >= deadline:
                 break
     finally:
         await engine.dispose()

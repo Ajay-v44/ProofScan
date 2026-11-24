@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         env_file=".env", extra="ignore", env_ignore_empty=True, hide_input_in_errors=True
     )
 
+    deployment_environment: Literal["local", "production"] = "local"
     database_url: str
     database_pool_size: int = Field(default=5, ge=1, le=100)
     database_max_overflow: int = Field(default=5, ge=0, le=100)
@@ -54,6 +55,11 @@ class Settings(BaseSettings):
         ):
             raise ValueError("WEB_ORIGIN must be an HTTP or HTTPS origin")
         self.web_origin = origin._replace(path="").geturl()
+        if self.deployment_environment == "production":
+            if origin.scheme != "https" or self.auth_mode != "supabase" or self.enable_simulator:
+                raise ValueError(
+                    "Production requires an HTTPS WEB_ORIGIN, Supabase Auth and the simulator disabled"
+                )
         if self.kimi_api_key:
             provider = urlsplit(self.kimi_base_url)
             if (

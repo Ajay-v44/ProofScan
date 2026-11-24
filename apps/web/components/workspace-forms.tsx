@@ -20,30 +20,43 @@ export function AuthDialog({ initialRegister, onAuthenticated, onClose }: {
 }) {
   const client = useQueryClient();
   const [register, setRegister] = useState(initialRegister);
-  const auth = useMutation({
-    mutationFn: (data: { email: FormDataEntryValue | null; password: FormDataEntryValue | null }) =>
-      api<{ message?: string }>(register ? "/auth/register" : "/auth/login", data),
-    onSuccess: async result => {
-      if (!result.message) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [message, setMessage] = useState<string>();
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const inputs = event.currentTarget;
+    const form = new FormData(inputs);
+    setBusy(true);
+    setError(null);
+    setMessage(undefined);
+    try {
+      const result = await api<{ message?: string }>(register ? "/auth/register" : "/auth/login", {
+        email: form.get("email"), password: form.get("password"),
+      });
+      inputs.reset();
+      if (result.message) setMessage(result.message);
+      else {
+        client.removeQueries({ predicate: query => query.queryKey[0] !== "session" });
         await client.invalidateQueries({ queryKey: ["session"] });
         onAuthenticated();
       }
-    },
-  });
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    auth.mutate({ email: form.get("email"), password: form.get("password") });
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setBusy(false);
+    }
   }
   return <Dialog title={register ? "Create an account" : "Sign in"} onClose={onClose}>
     <form className="dialog-form" onSubmit={submit}>
     <label>Email<input data-dialog-autofocus type="email" name="email" autoComplete="email" required /></label>
     <label>Password<input type="password" name="password" autoComplete={register ? "new-password" : "current-password"} required minLength={12} maxLength={128} /></label>
-    <ErrorNote error={auth.error} />
-    {auth.data?.message && <p className="notice" role="status">{auth.data.message}</p>}
+    <ErrorNote error={error} />
+    {message && <p className="notice" role="status">{message}</p>}
     <div className="actions">
-      <Button type="submit" disabled={auth.isPending}>{register ? "Create account" : "Sign in"}</Button>
-      <Button variant="quiet" onClick={() => { auth.reset(); setRegister(!register); }}>{register ? "Back to sign in" : "Create an account"}</Button>
+      <Button type="submit" disabled={busy}>{register ? "Create account" : "Sign in"}</Button>
+      <Button variant="quiet" disabled={busy} onClick={() => { setError(null); setMessage(undefined); setRegister(!register); }}>{register ? "Back to sign in" : "Create an account"}</Button>
     </div>
     </form>
   </Dialog>;

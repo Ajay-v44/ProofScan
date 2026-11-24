@@ -65,13 +65,53 @@ test("device advisor saves a private catalog item and cites it", async ({ page }
   });
   expect(account.ok()).toBeTruthy();
   await page.goto("/advisor");
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.getByText("Add a listing", { exact: true }).click();
   await page.getByLabel("Device name").fill("Battery test phone");
   await page.getByLabel("Specifications or listing notes").fill("Documented battery life and clear outdoor display.");
   await page.getByRole("button", { name: "Add device" }).click();
   await expect(page.getByRole("button", { name: "Remove Battery test phone" })).toBeVisible();
-  await page.getByLabel("What are you looking for?").fill("Which phone has good battery life?");
+  await page.getByRole("button", { name: "Which has the healthiest battery?" }).press("Enter");
+  await expect(page.getByLabel("What are you looking for?")).toHaveValue("Which has the healthiest battery?");
+  await page.getByText("Filters and AI options", { exact: true }).click();
+  await page.getByLabel("Include my saved listings").check();
   await page.getByRole("button", { name: "Get a recommendation" }).click();
   await expect(page.getByRole("heading", { name: "Recommendation" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sources from your catalog" })).toBeVisible();
   await expect(page.getByText("Battery test phone", { exact: true })).toHaveCount(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+});
+
+test("workspace navigation and product information reflow across screen sizes", async ({ page }) => {
+  await page.goto("/");
+  for (const width of [320, 390, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("heading", { name: "Your workspace" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start a verification" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  }
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.getByRole("button", { name: "Workspace options" }).click();
+  await expect(page.getByRole("dialog", { name: "Workspace options" }).getByRole("link", { name: "Check a report" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Workspace options" })).toBeFocused();
+  await page.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: "Buyer chat" }).click();
+  await expect(page.getByRole("heading", { name: "Buyer chat" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Buyer chat", exact: true })).toHaveAttribute("aria-current", "page");
+  await page.getByRole("link", { name: "Verifications" }).click();
+  await expect(page.getByRole("heading", { name: "Verifications", exact: true })).toBeVisible();
+  await page.getByRole("navigation", { name: "Product information" }).getByRole("link", { name: "About ProofScan" }).click();
+  await expect(page.getByRole("main").getByText(/Web version \d+\.\d+\.\d+/)).toBeVisible();
+  await page.getByRole("main").getByRole("link", { name: "Get help" }).click();
+  await expect(page.getByRole("heading", { name: "Help with ProofScan" })).toBeVisible();
+  await page.getByRole("navigation", { name: "Product information" }).getByRole("link", { name: "Privacy", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Privacy in ProofScan" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  const account = await page.request.post("/api/v1/auth/register", {
+    data: { email: "compact-" + randomUUID() + "@example.test", password: "Fixture-" + randomUUID() },
+  });
+  expect(account.ok()).toBeTruthy();
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "New verification" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });

@@ -3,7 +3,8 @@
 import { api, type Verification } from "@proofscan/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { ErrorNote, PublicShell, Status } from "./shared";
+import { ErrorNote, Status } from "./shared";
+import { WorkspaceFrame } from "./workspace-frame";
 import { Button } from "./ui/button";
 
 type AuditEntry = { id: string; actor_id: string; target_id: string; action: string; reason: string; created_at: string };
@@ -11,6 +12,13 @@ type Metrics = { handoffs: Record<string, number>; scans: { platform: string; st
   agent_runs: number; listing_mismatch_scans: number; evidence_bytes: number;
   model: { requests: number; accepted: number; input_tokens: number; output_tokens: number } };
 type OperatorHandoff = { id: string; asset_id: string; label: string; status: string };
+type Usage = { start: string; end: string; workflows: {
+  kind: string; requests: number; accepted: number; model_calls: number; input_tokens: number; output_tokens: number;
+}[] };
+const agentNames: Record<string, string> = {
+  buyer_chat: "Buyer chat", guided_device: "Guided device checks", handoff_visual: "Handoff photo guidance",
+  purchase_visual: "Purchase photo guidance",
+};
 
 export function Operator() {
   const client = useQueryClient();
@@ -18,6 +26,8 @@ export function Operator() {
   const overview = useQuery({ queryKey: ["admin", "overview"], queryFn: () => api<Record<string, number>>("/admin/overview") });
   const audit = useQuery({ queryKey: ["admin", "audit"], enabled: overview.isSuccess, queryFn: () => api<AuditEntry[]>("/admin/audit") });
   const metrics = useQuery({ queryKey: ["admin", "metrics"], enabled: overview.isSuccess, queryFn: () => api<Metrics>("/admin/metrics") });
+  const usage = useQuery({ queryKey: ["admin", "agent-usage"], enabled: overview.isSuccess,
+    queryFn: () => api<Usage>("/admin/agent-usage") });
   const results = useQuery({ queryKey: ["admin", "search", identifier], enabled: !!identifier && overview.isSuccess,
     queryFn: async () => {
       const encoded = encodeURIComponent(identifier);
@@ -30,15 +40,25 @@ export function Operator() {
     mutationFn: ({ path, reason }: { path: string; reason: string }) => api(path, { reason }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["admin"] }),
   });
-  return <PublicShell>
+  return <WorkspaceFrame page="Operator">
     <div className="page-title"><h1>ProofScan operator</h1><p>Review verification activity and manage report validity.</p></div>
-    <ErrorNote error={overview.error ?? audit.error ?? metrics.error ?? results.error ?? action.error} />
+    <ErrorNote error={overview.error ?? audit.error ?? metrics.error ?? usage.error ?? results.error ?? action.error} />
     {overview.isPending && <p role="status">Checking operator access…</p>}
     {overview.data && <>
       <section className="panel form"><h2>Verification status</h2>
         <div className="actions">{Object.entries(overview.data).map(([state, count]) => <span key={state}><Status value={state} /> {count}</span>)}</div>
         {!Object.keys(overview.data).length && <p>No verifications have been created.</p>}
       </section>
+      {usage.data && <section className="panel form">
+        <h2>Agent usage</h2><p>{usage.data.start} to {usage.data.end} UTC</p>
+        {usage.data.workflows.length > 0 ? <div className="table-scroll"><table>
+          <thead><tr><th>Workflow</th><th>Requests</th><th>Answers or accepted checks</th><th>Model calls</th><th>Tokens</th></tr></thead>
+          <tbody>{usage.data.workflows.map(row => <tr key={row.kind}>
+            <th scope="row">{agentNames[row.kind] ?? row.kind}</th><td>{row.requests}</td><td>{row.accepted}</td>
+            <td>{row.model_calls}</td><td>{row.input_tokens + row.output_tokens}</td>
+          </tr>)}</tbody>
+        </table></div> : <p>No agent activity in this period.</p>}
+      </section>}
       {metrics.data && <section className="panel form">
         <h2>Operations</h2><dl className="technical">
           <dt>Handoffs</dt><dd>{Object.values(metrics.data.handoffs).reduce((sum, value) => sum + value, 0)}</dd>
@@ -85,5 +105,5 @@ export function Operator() {
           : <p>No audit entries.</p>}
       </section>
     </>}
-  </PublicShell>;
+  </WorkspaceFrame>;
 }

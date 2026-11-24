@@ -5,11 +5,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import delete, select, update
 
+from .agent.report_index import index_shared_report
 from .auth import DB, Owner, set_cookie
 from .config import settings
 from .db import (
     AgentRun,
     AgentStep,
+    CaptureLink,
     Challenge,
     Claim,
     Consent,
@@ -29,6 +31,7 @@ from .db import (
 from .domain import TRANSITIONS, Status
 from .inspection import inspect
 from .pagination import PAGE_SIZE, before_record
+from .pickup import REQUIRED_VIEWS, compare_pickup, valid_baseline
 from .pricing import pricing_provider
 from .schemas import (
     ConsentIn,
@@ -74,13 +77,27 @@ def view(item: Verification) -> VerificationView:
         status=status,
         created_at=item.created_at,
         expires_at=item.expires_at,
+        require_exterior=item.require_exterior,
+        is_pickup=item.baseline_report_id is not None,
     )
 
 
 @owner_router.post("/verifications", response_model=CreatedVerification, status_code=201)
 async def create(data: CreateVerification, owner: Owner, db: DB) -> CreatedVerification:
+    return await open_request(data, owner, db)
+
+
+async def open_request(
+    data: CreateVerification, owner: UUID, db: DB, *, baseline_report_id: UUID | None = None
+) -> CreatedVerification:
     expires = now() + timedelta(days=2)
-    item = Verification(owner_id=owner, label=data.label, status=Status.DRAFT, expires_at=expires)
+    item = Verification(
+        owner_id=owner,
+        label=data.label,
+        status=Status.DRAFT,
+        expires_at=expires,
+        baseline_report_id=baseline_report_id,
+    )
     db.add(item)
     await db.flush()
     raw, digest = new_token()
@@ -91,6 +108,23 @@ async def create(data: CreateVerification, owner: Owner, db: DB) -> CreatedVerif
         **view(item).model_dump(),
         guest_url=f"{settings().web_origin.rstrip('/')}/seller/{item.id}#{raw}",
     )
+
+
+@owner_router.post(
+    "/verifications/{verification_id}/recheck", response_model=CreatedVerification, status_code=201
+)
+async def create_recheck(verification_id: UUID, owner: Owner, db: DB) -> CreatedVerification:
+    report_id = await db.scalar(
+        select(Report.id)
+        .join(Verification, Verification.id == Report.verification_id)
+        .where(Verification.id == verification_id, Verification.owner_id == owner)
+    )
+    if report_id is None:
+        raise HTTPException(404, "Shared report not found.")
+    baseline = await valid_baseline(db, owner, report_id)
+    claims = claims_view(await db.get(Claim, verification_id))
+    data = CreateVerification(label=("Pickup check · " + baseline.label)[:120], claims=claims)
+    return await open_request(data, owner, db, baseline_report_id=report_id)
 
 
 @owner_router.get("/verifications", response_model=list[VerificationView])
@@ -177,7 +211,9 @@ GuestSession = Annotated[tuple[Verification, Guest], Depends(guest_session)]
 async def guest_view(item: Verification, guest: Guest, db: DB) -> GuestView:
     claims = claims_view(await db.get(Claim, item.id))
     result = GuestView(
-        verification=view(item), claims=claims, simulator_enabled=settings().enable_simulator
+        verification=view(item),
+        claims=claims,
+        simulator_enabled=settings().enable_simulator and item.baseline_report_id is None,
     )
     if item.status in {Status.SCANNING, Status.SELLER_REVIEW}:
         scan_id = await db.scalar(select(Scan.id).where(Scan.guest_id == guest.id))
@@ -224,7 +260,9 @@ async def consent(data: ConsentIn, current: GuestSession, db: DB) -> GuestView:
 @guest_router.post("/scan", response_model=ScanTicket)
 async def start_scan(data: StartScan, current: GuestSession, db: DB) -> ScanTicket:
     item, guest = current
-    if data.platform == "simulator" and not settings().enable_simulator:
+    if data.platform == "simulator" and (
+        not settings().enable_simulator or item.baseline_report_id is not None
+    ):
         raise HTTPException(403, "The simulator is disabled.")
     scan = await db.scalar(select(Scan).where(Scan.guest_id == guest.id))
     if item.status != Status.SCANNING:
@@ -235,6 +273,7 @@ async def start_scan(data: StartScan, current: GuestSession, db: DB) -> ScanTick
         await db.flush()
     else:
         if scan.platform != data.platform:
+            await db.execute(delete(CaptureLink).where(CaptureLink.scan_id == scan.id))
             external = await db.scalar(select(ExternalScan.id).where(ExternalScan.scan_id == scan.id))
             if external is not None:
                 await db.execute(delete(Evidence).where(Evidence.external_scan_id == external))
@@ -296,12 +335,23 @@ async def submit(data: Submission, current: GuestSession, db: DB) -> GuestView:
             FunctionalReading(test=check.test, result=check.result, source="SELLER_OBSERVATION")
             for check in data.functional
         ]
+    photos = await photos_for_scan(db, scan.id)
+    if item.require_exterior and data.platform != "simulator":
+        missing = set(REQUIRED_VIEWS) - {photo.angle for photo in photos}
+        if missing:
+            raise HTTPException(
+                422,
+                "Add clear exterior photos of the " + " and ".join(sorted(missing)) + " before preview.",
+            )
+        if len({photo.digest for photo in photos if photo.angle in REQUIRED_VIEWS}) < len(
+            REQUIRED_VIEWS
+        ):
+            raise HTTPException(422, "Take separate photos of the front and back.")
     advance(db, item, Status.REPORT_READY, notify=True)
     advance(db, item, Status.SELLER_REVIEW)
     assert challenge is not None
     challenge.consumed_at = now()
     db.add(Snapshot(scan_id=scan.id, platform_data=hardware.model_dump(mode="json")))
-    photos = await photos_for_scan(db, scan.id)
     inspection = inspect(
         data.platform, hardware, claims_view(await db.get(Claim, item.id)), [p.angle for p in photos]
     )
@@ -332,7 +382,18 @@ async def submit(data: Submission, current: GuestSession, db: DB) -> GuestView:
     if price:
         report.pricing = "AVAILABLE"
         report.price_estimate = price
-    db.add(Report(id=report.report_id, verification_id=item.id, payload=report.model_dump(mode="json")))
+    if item.baseline_report_id is not None:
+        baseline = await valid_baseline(db, item.owner_id, item.baseline_report_id)
+        report.pickup = await compare_pickup(db, baseline, report)
+        report.schema_version = 3
+    exclude = {"pickup"} if report.pickup is None else None
+    db.add(
+        Report(
+            id=report.report_id,
+            verification_id=item.id,
+            payload=report.model_dump(mode="json", exclude=exclude),
+        )
+    )
     await db.flush()
     if price:
         db.add(PricingEstimate(report_id=report.report_id, **price.model_dump()))
@@ -353,6 +414,26 @@ async def decide(data: Decision, current: GuestSession, db: DB) -> GuestView:
         report = await db.scalar(select(Report).where(Report.verification_id == item.id))
         if report is None:
             raise HTTPException(409, "The report is not ready.")
+        if item.baseline_report_id is not None:
+            await valid_baseline(db, item.owner_id, item.baseline_report_id)
+        if item.require_exterior and report.payload.get("assurance") == "COLLECTOR_REPORTED":
+            payload = ReportPayload.model_validate(report.payload)
+            required_ids = {
+                photo.id for photo in payload.visual_evidence if photo.angle in REQUIRED_VIEWS
+            }
+            available = set(
+                await db.scalars(
+                    select(Evidence.id).where(
+                        Evidence.id.in_(required_ids),
+                        Evidence.expires_at > now(),
+                        Evidence.jpeg.is_not(None),
+                    )
+                )
+            )
+            if len(required_ids) != len(REQUIRED_VIEWS) or available != required_ids:
+                raise HTTPException(
+                    409, "The required exterior photos are unavailable. Request a fresh seller link."
+                )
         signature = signer().sign(report.payload)
         db.add(
             ReportSignature(
@@ -363,4 +444,5 @@ async def decide(data: Decision, current: GuestSession, db: DB) -> GuestView:
             )
         )
         advance(db, item, Status.COMPLETED)
+        await index_shared_report(db, item.owner_id, report)
     return await guest_view(item, guest, db)

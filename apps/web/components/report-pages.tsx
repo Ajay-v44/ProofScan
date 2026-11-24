@@ -1,26 +1,71 @@
 "use client";
 
 import { api, type SignedReport, type VerificationResult } from "@proofscan/api-client";
-import { useQuery } from "@tanstack/react-query";
-import { FileCheck2, ShieldCheck, ShieldX } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ShieldCheck, ShieldX } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ReportDetails } from "./report";
+import { EvidenceGallery } from "./evidence-gallery";
+import { angleName } from "./photo-capture";
 import { ErrorNote, PublicShell } from "./shared";
+import { WorkspaceFrame } from "./workspace-frame";
 import { Button } from "./ui/button";
 
 export function BuyerReport({ id }: { id: string }) {
   const report = useQuery({ queryKey: ["report", id], queryFn: () => api<SignedReport>("/verifications/" + id + "/report") });
-  return <PublicShell><div className="page-title"><span className="eyebrow"><FileCheck2 size={16} aria-hidden /> Purchase report</span><h1>{report.data?.payload.label ?? "Device verification report"}</h1></div>
+  const recheck = useMutation({
+    mutationFn: () => api<{ guest_url: string }>("/verifications/" + id + "/recheck", {}),
+  });
+  const payload = report.data?.payload;
+  const pickup = payload?.pickup;
+  const baselineId = pickup?.baseline_verification_id;
+  const baseline = useQuery({
+    queryKey: ["report", baselineId],
+    enabled: Boolean(baselineId) && report.data?.baseline_valid !== false,
+    queryFn: () => api<SignedReport>("/verifications/" + baselineId + "/report"),
+  });
+  return <WorkspaceFrame page="Purchase report"><div className="page-title"><h1>{report.data?.payload.label ?? "Device verification report"}</h1>
+    {payload && <p>Captured {new Date(payload.captured_at).toLocaleString()}</p>}</div>
     <ErrorNote error={report.error} />
     {report.isPending && <p role="status">Loading report…</p>}
-    {report.data && <section className="panel form">
-      <div><h2>Verification results</h2><p>Recorded {new Date(report.data.payload.captured_at).toLocaleString()}</p></div>
-      <p className={report.data.valid ? "notice good" : "notice warning"}>{report.data.valid ? "Signature verified" : "This signature is no longer valid"}</p>
+    {report.data && <div className="report-layout"><section className="panel form">
+      <h2>Verification results</h2>
       <ReportDetails report={report.data.payload} photoPath={"/verifications/" + id + "/photos"} />
-      <Link className="quiet-link" href={"/verify/" + report.data.payload.report_id}>Open public signature check</Link>
-    </section>}
-  </PublicShell>;
+      {pickup && <section className="flow-section">
+        <h3>Pickup comparison</h3>
+        <Link href={"/reports/" + pickup.baseline_verification_id}>Open the original signed report</Link>
+        {report.data.baseline_valid === false && <p className="notice warning">The original report is no longer valid. Review the new scan on its own.</p>}
+        <p>{pickup.changed_hardware.length
+          ? "Hardware differences to inspect: " + pickup.changed_hardware.join(", ")
+          : "No differences in the hardware fields available in both reports."}</p>
+        <div className="comparison-views">{pickup.visuals.map(view => {
+          const before = baseline.data?.payload.visual_evidence?.find(photo => photo.angle === view.angle);
+          const after = payload?.visual_evidence?.find(photo => photo.angle === view.angle);
+          return <div key={view.angle}><h4>{angleName[view.angle]}</h4><p>{view.detail}</p>
+            <EvidenceGallery thumbnails items={[
+              ...(before ? [{ href: "/api/v1/verifications/" + baselineId + "/photos/" + before.id, label: "Original " + view.angle + " view" }] : []),
+              ...(after ? [{ href: "/api/v1/verifications/" + id + "/photos/" + after.id, label: "Pickup " + view.angle + " view" }] : []),
+            ]} />
+          </div>;
+        })}</div>
+        <p>Check the item in person. Matching readings and photos cannot establish that it is the same physical unit.</p>
+      </section>}
+    </section><aside className="report-actions">
+      <section className="panel form">
+        <h2>Report signature</h2>
+        <p className={report.data.valid ? "notice good" : "notice warning"}>{report.data.valid ? "Signature verified" : "This signature is no longer valid"}</p>
+        <Link className="quiet-link" href={"/verify/" + report.data.payload.report_id}>Open public signature check</Link>
+      </section>
+      {report.data.valid && report.data.payload.assurance === "COLLECTOR_REPORTED" && <section className="panel form">
+        <h2>Check the device at pickup</h2>
+        <p>When you have the device in hand, collect fresh readings and photos using a private recheck link. The new report compares them with this one.</p>
+        {!recheck.data && <Button variant="outline" disabled={recheck.isPending} onClick={() => recheck.mutate()}>Create pickup recheck link</Button>}
+        {recheck.data && <label>Private pickup link<input readOnly value={recheck.data.guest_url} onFocus={event => event.currentTarget.select()} /></label>}
+        <ErrorNote error={recheck.error} />
+      </section>}
+    </aside></div>}
+  </WorkspaceFrame>;
 }
 
 export function VerifyReport({ id }: { id?: string }) {

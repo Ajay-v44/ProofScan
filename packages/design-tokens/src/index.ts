@@ -1,24 +1,29 @@
 export const colors = {
-  canvas: "#f7f7fa",
+  canvas: "#f3f5f7",
   surface: "#ffffff",
-  ink: "#221d30",
-  muted: "#605a70",
-  line: "#e5e1ed",
-  border: "#d6cfe3",
-  brand: "#5131bb",
-  brandHover: "#41269c",
-  brandTint: "#efeafb",
-  focus: "#7854e4",
-  lilac: "#eee9f8",
-  mint: "#e6f1ea",
-  mintInk: "#285645",
-  cream: "#fbf0dd",
-  creamInk: "#775022",
-  danger: "#9c333b",
-  dangerTint: "#f9e9eb",
+  ink: "#142538",
+  muted: "#495c6f",
+  line: "#dce3ea",
+  border: "#a9b7c5",
+  brand: "#1c435d",
+  brandHover: "#153248",
+  brandTint: "#e9f1f6",
+  focus: "#1973a0",
+  navy: "#101e2c",
+  navyRaised: "#1b3044",
+  inverseText: "#eaf1f7",
+  inverseMuted: "#b4c3d1",
+  accent: "#ffae83",
+  accentHover: "#ffc5a6",
+  mint: "#e6f2ec",
+  mintInk: "#20513b",
+  cream: "#fff0dc",
+  creamInk: "#73411f",
+  danger: "#9a2731",
+  dangerTint: "#fbe9e9",
 } as const;
 
-export const radii = { control: 9, card: 15, cover: 20 } as const;
+export const radii = { control: 8, card: 12, cover: 16 } as const;
 
 export const themeVariables = {
   ...Object.fromEntries(Object.entries(colors).map(([name, value]) => [

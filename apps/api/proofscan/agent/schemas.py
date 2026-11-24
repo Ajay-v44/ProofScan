@@ -44,14 +44,20 @@ class CatalogInput(Input):
 
 class CatalogView(CatalogInput):
     id: UUID
+    verification_id: UUID | None = None
+    facts: dict[str, int | bool | None] | None = None
 
 
 class Question(Input):
     question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=600)]
-    category: Category = "phone"
+    category: Category | None = "phone"
+    previous_question: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=600)] | None
+    ) = None
     budget: Amount | None = None
     currency: Currency | None = None
     allow_model: bool = False
+    reports_only: bool = False
 
     @model_validator(mode="after")
     def budget_needs_currency(self) -> "Question":
@@ -60,12 +66,15 @@ class Question(Input):
         return self
 
 
+RetrievalMode = Literal["lexical", "pgvector"]
+
+
 class Recommendation(BaseModel):
     status: Literal["answer", "needs_input", "no_evidence"]
     message: str
     sources: list[CatalogView] = Field(default_factory=list)
     tools: list[Literal["search_catalog", "compare_candidates"]] = Field(default_factory=list)
-    retrieval: Literal["lexical", "pgvector"]
+    retrieval: RetrievalMode
     model_used: bool
 
 

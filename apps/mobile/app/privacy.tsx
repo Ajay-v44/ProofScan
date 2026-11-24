@@ -29,7 +29,7 @@ export default function Privacy() {
     </Panel>
     <Panel>
       <Text accessibilityRole="header" style={styles.heading}>Exterior photos</Text>
-      <Text style={styles.text}>You can add photos of the device using your camera. The scanner uploads them to your workspace for review.</Text>
+      <Text style={styles.text}>New purchase checks need clear front and back photos. ProofScan compares photos inside your workspace and removes camera metadata from saved images. Keep faces, documents and private labels outside the frame.</Text>
     </Panel>
     <Panel>
       <Text accessibilityRole="header" style={styles.heading}>Your report and link</Text>

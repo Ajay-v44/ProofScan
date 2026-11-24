@@ -1,8 +1,11 @@
 export type Claims = { memory_gib?: number | null; storage_gb?: number | null; battery_percent?: number | null };
-export type Verification = { id: string; label: string; status: string; created_at: string; expires_at: string };
+export type Verification = { id: string; label: string; status: string; created_at: string; expires_at: string; require_exterior?: boolean; is_pickup?: boolean };
+export type CaptureLink = { url: string; expires_at: string };
+export type CaptureProgress = { views: Angle[] };
 export type Platform = "windows" | "macos" | "android" | "ios" | "simulator";
 export type Angle = "front" | "back" | "left" | "right";
 export type Photo = { id: string; angle: Angle; digest: string; width: number; height: number };
+export type VisualFinding = { angle: Angle; status: "unavailable" | "retake" | "reused" | "review" | "no_clear_change"; detail: string };
 export type FunctionalCheck = { test: "display" | "keyboard" | "speakers"; result: "PASS" | "ISSUE" };
 export type Hardware = {
   manufacturer?: string | null;
@@ -14,7 +17,7 @@ export type Hardware = {
   battery_health_percent?: number | null;
 };
 export type Report = {
-  schema_version: 1 | 2;
+  schema_version: 1 | 2 | 3;
   report_id: string;
   verification_id: string;
   captured_at: string;
@@ -29,8 +32,10 @@ export type Report = {
   visual_evidence?: Photo[];
   inspection_requests?: { test: "request_external_view" | "request_battery_reading"; angle?: Angle | null }[];
   functional?: (FunctionalCheck & { source: "SELLER_OBSERVATION" | "SIMULATED" })[];
+  pickup?: { baseline_report_id: string; baseline_verification_id: string; baseline_captured_at: string;
+    changed_hardware: string[]; compared_hardware: string[]; visuals: VisualFinding[] } | null;
 };
-export type SignedReport = { payload: Report; digest: string; signature: string; key_id: string; valid: boolean };
+export type SignedReport = { payload: Report; digest: string; signature: string; key_id: string; valid: boolean; baseline_valid?: boolean | null };
 export type VerificationResult = {
   report_id: string; valid: boolean; invalidated: boolean; digest: string; signature: string; key_id: string; public_key: string | null;
 };
@@ -46,17 +51,20 @@ export type ScanTicket = { scan_id: string; challenge: string; issued_at: string
 export type Notification = { id: string; verification_id: string | null; handoff_id: string | null; event: string; created_at: string };
 export type HandoffMode = "windows" | "visual" | "simulator";
 export type Handoff = { id: string; asset_id: string; label: string; mode: HandoffMode; status: string;
-  receiver_accepted: boolean; report_id: string | null; photos: ("baseline" | "return")[] };
+  receiver_accepted: boolean; report_id: string | null; photos: ("baseline" | "return")[];
+  photo_views: Record<string, Angle[]>; next_view: Angle | null; capture_feedback: VisualFinding | null };
 type Checkpoint = { recorded_at: string; note: string | null; photo_digest: string | null };
 export type HandoffReport = { digest: string; signature: string; key_id: string; valid: boolean; payload: {
   report_id: string; label: string; mode: HandoffMode; baseline: Checkpoint; return: Checkpoint;
   differences: { metric: string; before: string | number | null; after: string | number | null; status: string }[];
+  visual_findings?: VisualFinding[];
 } };
 
 export type CatalogCategory = "phone" | "tablet" | "laptop" | "other";
 export type CatalogItem = {
   id: string; category: CatalogCategory; title: string; notes: string;
   price: number | null; currency: string | null; source_url: string | null;
+  verification_id?: string | null; facts?: Record<string, number | boolean | null> | null;
 };
 export type AdvisorResult = {
   status: "answer" | "needs_input" | "no_evidence"; message: string; sources: CatalogItem[];

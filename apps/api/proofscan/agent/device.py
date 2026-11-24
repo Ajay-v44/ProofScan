@@ -15,6 +15,7 @@ from .model import decide
 from .models import AgentExecution
 from .schemas import DeviceAdvance, DevicePlan, DeviceStart, DeviceTool, MobilePlatform, ToolStatus
 from .telemetry import AgentTrace, Event
+from .usage import record_usage
 
 router = APIRouter(prefix="/guest/{verification_id}/agent", tags=["guided device scan"])
 PLAN_TTL = timedelta(minutes=20)
@@ -137,6 +138,7 @@ async def advance_plan(run_id: UUID, data: DeviceAdvance, current: GuestSession,
         run.state = state.model_dump()
         run.status = "collecting" if available else "complete"
         trace.publish(run.status)
+        await record_usage(db, "guided_device", accepted=True, trace=trace)
         return plan_view(run)
 
     # Reserve this revision before contacting the model. The short lease allows a safe restart after a crash.
@@ -195,4 +197,5 @@ async def advance_plan(run_id: UUID, data: DeviceAdvance, current: GuestSession,
     )
     if updated is None:
         raise HTTPException(409, "The collection session changed. Open your active seller link again.")
+    await record_usage(db, "guided_device", accepted=True, trace=trace)
     return DevicePlan(id=run_id, revision=revision, status="collecting", next_tool=state.next_tool)

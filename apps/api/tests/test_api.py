@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from proofscan.config import settings
 from proofscan.db import (
     Base,
+    CaptureLink,
     Challenge,
     Evidence,
     Guest,
@@ -106,6 +107,24 @@ async def open_guest(guest, verification, token):
     response = await guest.post(path + "/exchange", json={"token": token})
     assert response.status_code == 200, response.text
     return path
+
+
+def exterior_image(seed: int) -> bytes:
+    tiles = np.random.default_rng(seed).integers(45, 215, (24, 24), dtype=np.uint8)
+    photo = cv2.resize(tiles, (384, 384), interpolation=cv2.INTER_NEAREST)
+    ok, encoded = cv2.imencode(".jpg", photo)
+    assert ok
+    return encoded.tobytes()
+
+
+async def upload_views(guest, path, ticket, seeds=(1, 2)):
+    for angle, seed in zip(("front", "back"), seeds, strict=True):
+        result = await guest.post(
+            path + f"/photos?angle={angle}",
+            content=exterior_image(seed),
+            headers={"Content-Type": "image/jpeg", "X-Scan-Challenge": ticket["challenge"]},
+        )
+        assert result.status_code == 201, result.text
 
 
 async def consent_and_scan(guest, path):
@@ -266,6 +285,7 @@ async def test_native_guest_header_and_platform_limitations(clients):
         assert (await mobile.get("/api/v1/verifications")).status_code == 401
         await mobile.post(path + "/consent", json={"policy_version": "2026-11-23", "accepted": True})
         ticket = (await mobile.post(path + "/scan", json={"platform": "ios"})).json()
+        await upload_views(mobile, path, ticket)
         result = await mobile.post(
             path + "/submit",
             json={
@@ -428,6 +448,10 @@ async def test_listing_provider_runs_after_quota_transaction_is_committed(client
 
     class Provider:
         async def suggest(self, listing):
+            assert "16 GiB" in listing
+            assert not any(
+                value in listing for value in ("seller@example.test", "555", "private.example")
+            )
             started.set()
             await release.wait()
             return Suggestion(Claims(memory_gib=16), 32, 8)
@@ -436,7 +460,12 @@ async def test_listing_provider_runs_after_quota_transaction_is_committed(client
     async with client() as buyer:
         owner, _ = await register(buyer)
         pending = asyncio.create_task(
-            buyer.post("/api/v1/claims/suggest", json={"listing": "16 GiB advertised memory"})
+            buyer.post(
+                "/api/v1/claims/suggest",
+                json={
+                    "listing": "16 GiB advertised memory. Private contact seller@example.test or +1 (555) 012-4455 at https://private.example/path",
+                },
+            )
         )
         try:
             await asyncio.wait_for(started.wait(), timeout=2)
@@ -527,13 +556,11 @@ async def test_advisor_scopes_retrieval_and_requires_model_permission(clients, m
             assert approved
             calls.append(facts)
             actions = facts["allowed_actions"]
-            if "search_catalog" in actions:
-                return recommendations.Action(action="search_catalog", query="battery")
+            assert "search_catalog" not in actions
+            assert "message" not in facts["action_schema"]["properties"]
             if "compare_candidates" in actions:
                 return recommendations.Action(action="compare_candidates", candidates=[1])
-            return recommendations.Action(
-                action="recommend", candidates=[1], message="It meets your budget."
-            )
+            return recommendations.Action(action="recommend", candidates=[1])
 
         monkeypatch.setattr(recommendations, "decide", model)
         path = "/api/v1/agent/ask"
@@ -545,7 +572,7 @@ async def test_advisor_scopes_retrieval_and_requires_model_permission(clients, m
         assert result.json()["tools"] == ["search_catalog", "compare_candidates"]
         assert result.json()["model_used"]
         assert [item["title"] for item in result.json()["sources"]] == ["Owner phone"]
-        assert len(calls) == 3 and "Private phone" not in str(calls)
+        assert len(calls) == 2 and "Private phone" not in str(calls)
         assert (await owner.delete("/api/v1/agent/catalog/" + foreign.json()["id"])).status_code == 404
         assert (await owner.delete("/api/v1/agent/catalog/" + ours.json()["id"])).status_code == 204
         empty = await owner.post(path, json=question)
@@ -660,3 +687,236 @@ async def test_agent_pgvector_filters_before_cosine_similarity(clients, monkeypa
         assert result.is_success, result.text
         assert result.json()["retrieval"] == "pgvector"
         assert [item["title"] for item in result.json()["sources"]] == ["Similar owned"]
+
+        async def missing_model(*_args, **_kwargs):
+            raise catalog.VectorUnavailable("fixture embedding unavailable")
+
+        monkeypatch.setattr(catalog, "vector_for", missing_model)
+        assert (
+            await owner.post("/api/v1/agent/catalog", json={**document, "title": "Deferred vector"})
+        ).is_success
+        fallback = await owner.post("/api/v1/agent/ask", json={"question": "Unrelated owned"})
+        assert fallback.is_success, fallback.text
+        assert fallback.json()["retrieval"] == "lexical"
+        assert [item["title"] for item in fallback.json()["sources"]] == ["Unrelated owned"]
+
+
+async def test_readiness_requires_the_release_migration_version(clients, monkeypatch):
+    from proofscan import main
+
+    client, factory = clients
+    monkeypatch.setattr(main, "database", lambda: factory.kw["bind"])
+    async with client() as probe:
+        assert (await probe.get("/health/live")).is_success
+        assert (await probe.get("/health")).status_code == 503
+        async with factory.begin() as db:
+            await db.execute(text("CREATE TABLE alembic_version (version_num text PRIMARY KEY)"))
+            await db.execute(text("INSERT INTO alembic_version VALUES ('old')"))
+        assert (await probe.get("/health")).status_code == 503
+        async with factory.begin() as db:
+            await db.execute(text("DELETE FROM alembic_version"))
+            for head in main.migration_heads():
+                await db.execute(text("INSERT INTO alembic_version VALUES (:head)"), {"head": head})
+        assert (await probe.get("/health")).is_success
+
+
+async def test_camera_link_has_photo_only_access_and_expires(clients):
+    client, factory = clients
+    async with client() as buyer, client() as seller, client() as camera:
+        await register(buyer)
+        verification, token = await new_request(buyer)
+        seller_path = await open_guest(seller, verification, token)
+        camera_path = f"/api/v1/capture/{verification}"
+        assert (await seller.post(seller_path + "/photo-link", json={})).status_code == 409
+        await seller.post(
+            seller_path + "/consent", json={"policy_version": "2026-11-23", "accepted": True}
+        )
+        ticket = (await seller.post(seller_path + "/scan", json={"platform": "ios"})).json()
+
+        async def camera_header():
+            response = await seller.post(seller_path + "/photo-link", json={})
+            assert response.status_code == 201, response.text
+            return {"X-Photo-Token": response.json()["url"].split("#")[1]}
+
+        headers = await camera_header()
+        assert (await camera.get(camera_path, headers=headers)).json() == {"views": []}
+        assert (
+            await camera.get(seller_path, headers={"X-Guest-Token": headers["X-Photo-Token"]})
+        ).status_code == 404
+        assert (
+            await camera.post(seller_path + "/decision", json={"decision": "share"}, headers=headers)
+        ).status_code == 404
+        assert (await camera.get(f"/api/v1/capture/{uuid4()}", headers=headers)).status_code == 404
+        first = exterior_image(1)
+        assert (
+            await camera.post(camera_path + "/photos?angle=front", content=first, headers=headers)
+        ).is_success
+        assert (
+            await camera.post(camera_path + "/photos?angle=back", content=first, headers=headers)
+        ).status_code == 422
+        async with factory.begin() as db:
+            await db.execute(update(CaptureLink).values(expires_at=now() - timedelta(seconds=1)))
+        assert (await camera.get(camera_path, headers=headers)).status_code == 404
+        fresh = await camera_header()
+        assert (await camera.get(camera_path, headers=fresh)).json() == {"views": ["front"]}
+        assert (
+            await camera.post(
+                camera_path + "/photos?angle=back", content=exterior_image(2), headers=fresh
+            )
+        ).is_success
+        assert (
+            await seller.post(
+                seller_path + "/submit",
+                json={
+                    "platform": "ios",
+                    "scan_id": ticket["scan_id"],
+                    "challenge": ticket["challenge"],
+                    "hardware": {"manufacturer": "Example", "model": "Phone", "memory_gib": 8},
+                },
+            )
+        ).is_success
+        assert (await camera.get(camera_path, headers=fresh)).status_code == 404
+
+
+async def test_purchase_views_pickup_and_private_report_retrieval(clients, monkeypatch):
+    from proofscan.agent import recommendations
+
+    client, _ = clients
+    async with client() as buyer, client() as seller, client() as other, client() as admin:
+        await register(buyer)
+        await register(other)
+        administrator, _ = await register(admin)
+        settings().admin_subjects.add(UUID(administrator))
+        verification, token = await new_request(buyer)
+        path = await open_guest(seller, verification, token)
+
+        async def request_scan(guest, base, model):
+            assert (
+                await guest.post(
+                    base + "/consent", json={"policy_version": "2026-11-23", "accepted": True}
+                )
+            ).is_success
+            ticket = (await guest.post(base + "/scan", json={"platform": "ios"})).json()
+            return ticket, {
+                "scan_id": ticket["scan_id"],
+                "challenge": ticket["challenge"],
+                "platform": "ios",
+                "hardware": {"manufacturer": "Example", "model": model, "memory_gib": 8},
+            }
+
+        ticket, reading = await request_scan(seller, path, "Verified phone seller@example.test")
+        assert (await seller.post(path + "/submit", json=reading)).status_code == 422
+        await upload_views(seller, path, ticket)
+        preview = (await seller.post(path + "/submit", json=reading)).json()["preview"]
+        question = {
+            "question": "Which phone has more memory? My contact is buyer@example.test",
+            "reports_only": True,
+            "category": "phone",
+            "allow_model": True,
+        }
+        messages = []
+
+        async def model(_prompt, facts, _shape, _trace, *, approved):
+            assert approved
+            messages.append(facts)
+            return recommendations.Action(
+                action="search_catalog" if "search_catalog" in facts["allowed_actions"] else "recommend",
+                candidates=[1],
+            )
+
+        monkeypatch.setattr(recommendations, "decide", model)
+        assert (await buyer.post("/api/v1/agent/ask", json=question)).json()["sources"] == []
+        shared = await seller.post(path + "/decision", json={"decision": "share"})
+        assert shared.is_success, shared.text
+        result = await buyer.post("/api/v1/agent/ask", json=question)
+        assert result.is_success, result.text
+        source = result.json()["sources"][0]
+        assert source["verification_id"] == verification
+        assert "@" not in source["title"]
+        assert "example.test" not in str(messages) and verification not in str(messages)
+        assert (await other.post("/api/v1/agent/ask", json=question)).json()["sources"] == []
+        alternative, token = await new_request(buyer)
+        alternative_path = await open_guest(seller, alternative, token)
+        ticket, reading = await request_scan(seller, alternative_path, "16 GiB phone")
+        reading["hardware"]["memory_gib"] = 16
+        await upload_views(seller, alternative_path, ticket)
+        assert (await seller.post(alternative_path + "/submit", json=reading)).is_success
+        assert (await seller.post(alternative_path + "/decision", json={"decision": "share"})).is_success
+        ranked = await buyer.post("/api/v1/agent/ask", json={**question, "allow_model": False})
+        assert [item["verification_id"] for item in ranked.json()["sources"]] == [
+            alternative,
+            verification,
+        ]
+        assert "ranks highest for recorded memory" in ranked.json()["message"]
+        route = f"/api/v1/verifications/{verification}/recheck"
+        assert (await other.post(route, json={})).status_code == 404
+        pickup = await buyer.post(route, json={})
+        assert pickup.status_code == 201, pickup.text
+        pickup_record = pickup.json()
+        next_path = await open_guest(
+            seller, pickup_record["id"], pickup_record["guest_url"].split("#")[1]
+        )
+        ticket, reading = await request_scan(seller, next_path, "Different phone")
+        await upload_views(seller, next_path, ticket)
+        response = await seller.post(next_path + "/submit", json=reading)
+        assert response.is_success, response.text
+        comparison = response.json()["preview"]["pickup"]
+        assert comparison["baseline_report_id"] == preview["report_id"]
+        assert "Model" in comparison["changed_hardware"]
+        assert {item["status"] for item in comparison["visuals"]} == {"reused"}
+        assert (await buyer.get("/api/v1/admin/agent-usage")).status_code == 403
+        usage = (await admin.get("/api/v1/admin/agent-usage")).json()["workflows"]
+        assert {row["kind"] for row in usage} == {"buyer_chat", "purchase_visual"}
+        assert all("owner_id" not in row and "question" not in row for row in usage)
+        assert (
+            await admin.post(
+                "/api/v1/admin/reports/" + preview["report_id"] + "/invalidate",
+                json={"reason": "Fixture baseline revoked"},
+            )
+        ).status_code == 204
+        remaining = (await buyer.post("/api/v1/agent/ask", json=question)).json()["sources"]
+        assert [item["verification_id"] for item in remaining] == [alternative]
+        assert (
+            await seller.post(next_path + "/decision", json={"decision": "share"})
+        ).status_code == 404
+
+        pickup = await buyer.post(f"/api/v1/verifications/{alternative}/recheck", json={})
+        pickup_record = pickup.json()
+        next_path = await open_guest(
+            seller, pickup_record["id"], pickup_record["guest_url"].split("#")[1]
+        )
+        ticket, reading = await request_scan(seller, next_path, "16 GiB phone")
+        await upload_views(seller, next_path, ticket)
+        assert (await seller.post(next_path + "/submit", json=reading)).is_success
+        assert (await seller.post(next_path + "/decision", json={"decision": "share"})).is_success
+        signed = await buyer.get(f"/api/v1/verifications/{pickup_record['id']}/report")
+        assert signed.is_success and signed.json()["valid"] and signed.json()["baseline_valid"]
+        assert signed.json()["payload"]["pickup"]["baseline_verification_id"] == alternative
+
+
+async def test_handoff_guide_rejects_dark_views_and_compares_matching_angles(clients):
+    client, _ = clients
+    async with client() as owner:
+        await register(owner)
+        created = await owner.post("/api/v1/handoffs", json={"label": "Camera bag", "mode": "visual"})
+        path = "/api/v1/handoffs/" + created.json()["id"]
+        assert (await owner.post(path + "/start", json={})).json()["handoff"]["next_view"] == "front"
+        _, dark = cv2.imencode(".jpg", np.zeros((384, 384), dtype=np.uint8))
+        assert (
+            await owner.post(path + "/photos?angle=front", content=dark.tobytes())
+        ).status_code == 422
+        photo = exterior_image(3)
+        saved = await owner.post(path + "/photos?angle=front", content=photo)
+        assert saved.is_success, saved.text
+        assert saved.json()["next_view"] == "back"
+        assert (await owner.post(path + "/record", json={"condition": "clean"})).is_success
+        assert (await owner.post(path + "/activate", json={})).is_success
+        assert (await owner.post(path + "/start", json={})).json()["handoff"]["next_view"] == "front"
+        returned = await owner.post(path + "/photos?angle=front", content=photo)
+        assert returned.json()["capture_feedback"]["status"] == "reused"
+        assert returned.json()["next_view"] == "front"
+        assert (await owner.get(path + "/photos/baseline?angle=front")).is_success
+        assert (await owner.post(path + "/record", json={"condition": "clean"})).is_success
+        report = (await owner.get(path + "/report")).json()
+        assert report["valid"]
+        assert report["payload"]["visual_findings"][0]["status"] == "reused"

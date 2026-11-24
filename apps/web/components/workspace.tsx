@@ -3,29 +3,24 @@
 import { api, ApiError, type Notification, type Report, type Verification } from "@proofscan/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Bell, ChevronRight, ClipboardCheck, FileCheck2, FolderOpen, Grid2X2, Laptop, LayoutGrid,
-  Link2, List, LogOut, PackageCheck, Plus, RefreshCw, ScanLine, Search, ShieldCheck, Sparkles, UserRound,
+  Bell, FileCheck2, FolderOpen, Grid2X2, Laptop,
+  Ellipsis, Link2, List, LogOut, PackageCheck, Plus, RefreshCw, ScanLine, Search, ShieldCheck, Sparkles, UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ReportDetails } from "./report";
 import { LoadMore, useOwnerCollection } from "./owner-collection";
-import { Brand, ErrorNote, Status } from "./shared";
+import { ErrorNote, Status } from "./shared";
 import { Button, buttonVariants } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { AuthDialog, NewVerification } from "./workspace-forms";
+import { WorkspaceFrame, type WorkspaceSection } from "./workspace-frame";
 
-type Section = "Home" | "Verifications" | "Activity";
 type Session = { user_id: string; admin: boolean; listing_assistance: boolean };
 type Example = { id: string; label: string; detail: string; report: Report };
 type Filter = "All" | "In progress" | "Shared" | "Closed";
-type Overlay = "sign-in" | "register" | "new" | "create" | "seller" | "search" | "account" | null;
-
-const sections = [
-  { id: "Home", icon: LayoutGrid },
-  { id: "Verifications", icon: ScanLine },
-] as const;
+type Overlay = "sign-in" | "register" | "new" | "seller" | "search" | "account" | null;
 
 function example(id: string, label: string, manufacturer: string, model: string, storage: number): Example {
   const matches = storage === 512;
@@ -123,7 +118,7 @@ function Records({ rows, showExamples, pending, onExample, onRecord, onRefresh, 
               <span className="record-text"><strong>{item.label}</strong><span>{item.detail}</span></span>
             </button>
             <div className="record-end"><span className="example-status">Example</span>
-              <button type="button" className="text-action" onClick={() => onExample(item)}>View sample report<ChevronRight size={16} aria-hidden /></button></div>
+              <button type="button" className="text-action" onClick={() => onExample(item)}>View sample report</button></div>
           </li>)}
           {visible.map(row => <li className="verification-item" key={row.id}>
             <button type="button" className="record-main" onClick={() => onRecord(row.id)}>
@@ -131,8 +126,8 @@ function Records({ rows, showExamples, pending, onExample, onRecord, onRefresh, 
               <span className="record-text"><strong>{row.label}</strong><time dateTime={row.created_at}>{new Date(row.created_at).toLocaleDateString()}</time></span>
             </button>
             <div className="record-end"><Status value={row.status} />
-              {row.status === "COMPLETED" ? <Link className="text-action" href={"/reports/" + row.id}>Open report<ChevronRight size={16} aria-hidden /></Link>
-                : <button className="text-action" type="button" onClick={() => onRecord(row.id)}>View details<ChevronRight size={16} aria-hidden /></button>}</div>
+              {row.status === "COMPLETED" ? <Link className="text-action" href={"/reports/" + row.id}>Open report</Link>
+                : <button className="text-action" type="button" onClick={() => onRecord(row.id)}>View details</button>}</div>
           </li>)}
         </ul>}
   </section>;
@@ -176,7 +171,7 @@ function SearchWorkspace({ rows, onExample, onRecord, onCreate, onSeller }: {
   const links = [
     { name: "Handoffs", icon: PackageCheck, href: "/handoffs" },
     { name: "Check a report", icon: ShieldCheck, href: "/verify" },
-    { name: "Device advisor", icon: Sparkles, href: "/advisor" },
+    { name: "Buyer chat", icon: Sparkles, href: "/advisor" },
   ].filter(item => item.name.toLowerCase().includes(value));
   const real = rows.filter(item => (item.label + " " + item.id).toLowerCase().includes(value)).slice(0, 8);
   const samples = examples.filter(item => item.label.toLowerCase().includes(value));
@@ -205,10 +200,10 @@ function SearchWorkspace({ rows, onExample, onRecord, onCreate, onSeller }: {
   </div>;
 }
 
-export function Workspace() {
+export function Workspace({ initialSection, initialOverlay }: { initialSection: WorkspaceSection; initialOverlay: "search" | "seller" | null }) {
   const client = useQueryClient();
-  const [section, setSection] = useState<Section>("Home");
-  const [overlay, setOverlay] = useState<Overlay>(null);
+  const [section, setSection] = useState(initialSection);
+  const [overlay, setOverlay] = useState<Overlay>(initialOverlay);
   const [sample, setSample] = useState<Example | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [afterSignIn, setAfterSignIn] = useState(false);
@@ -245,42 +240,22 @@ export function Workspace() {
   function viewExample(item: Example) { close(); setSelected(null); setSample(item); }
   function viewRecord(id: string) { close(); setSample(null); setSelected(id); }
 
-  return <div className="workspace">
-    <a className="skip-link" href="#main">Skip to content</a>
-    <aside className="sidebar">
-      <div className="sidebar-brand"><Brand /></div>
-      <Button className="sidebar-create" onClick={() => setOverlay("create")}><Plus size={19} aria-hidden /> Create</Button>
-      <nav aria-label="Workspace" className="navigation">
-        {sections.map(({ id, icon: Icon }) => <button type="button" className="nav-link" key={id}
-          aria-current={section === id ? "page" : undefined} onClick={() => setSection(id)}><Icon size={19} aria-hidden />{id}</button>)}
-        <Link className="nav-link" href="/handoffs"><PackageCheck size={19} aria-hidden />Handoffs</Link>
-        <Link className="nav-link" href="/advisor"><Sparkles size={19} aria-hidden />Device advisor</Link>
-        <Link className="nav-link" href="/verify"><ShieldCheck size={19} aria-hidden />Check a report</Link>
-        <button type="button" className="nav-link" aria-current={section === "Activity" ? "page" : undefined} onClick={() => setSection("Activity")}><Bell size={19} aria-hidden />Activity</button>
-        {user?.admin && <Link className="nav-link" href="/admin"><FileCheck2 size={19} aria-hidden />Operator</Link>}
-      </nav>
-      <div className="sidebar-footer">
+  return <>
+    <WorkspaceFrame page={section} onSectionChange={setSection} admin={user?.admin}
+      sidebarActions={<>
         <button type="button" className="nav-link" onClick={() => setOverlay("seller")}><Link2 size={18} aria-hidden />Open a seller link</button>
         {user ? <button type="button" className="nav-link" onClick={() => logout.mutate()} disabled={logout.isPending}><LogOut size={18} aria-hidden />Sign out</button>
           : <button type="button" className="nav-link" onClick={() => setOverlay("register")}><UserRound size={18} aria-hidden />Create an account</button>}
-      </div>
-    </aside>
-    <div className="workspace-main">
-      <header className="workspace-header">
-        <div className="mobile-brand"><Brand /></div>
-        <button type="button" className="workspace-search" onClick={() => setOverlay("search")} aria-label="Search workspace">
-          <Search size={18} aria-hidden /><span>Search verifications or tools</span><kbd>Ctrl K</kbd>
-        </button>
-        <div className="top-actions">
-          <button type="button" className="icon-button top-seller" aria-label="Open seller link" onClick={() => setOverlay("seller")}><Link2 size={19} aria-hidden /></button>
+      </>}
+      lead={<button type="button" className="workspace-search" onClick={() => setOverlay("search")} aria-label="Search workspace">
+        <Search size={18} aria-hidden /><span>Search verifications or tools</span><kbd>Ctrl K</kbd></button>}
+      actions={<>
           {user ? <>
             <Button className="top-new" onClick={create} aria-label="New verification"><Plus size={17} aria-hidden /><span>New verification</span></Button>
-            <button type="button" className="icon-button top-account" aria-label="Account" onClick={() => setOverlay("account")}><UserRound size={18} aria-hidden /></button>
           </>
             : <Button variant="outline" onClick={() => setOverlay("sign-in")}>Sign in</Button>}
-        </div>
-      </header>
-      <main id="main" className="workspace-body">
+          <button type="button" className="icon-button top-account" aria-label="Workspace options" onClick={() => setOverlay("account")}><Ellipsis size={21} aria-hidden /></button>
+      </>}>
         <ErrorNote error={sessionError ?? logout.error ?? rows.error ?? activity.error} />
         <div className="work-title">
           <h1>{section === "Home" ? "Your workspace" : section}</h1>
@@ -288,18 +263,21 @@ export function Workspace() {
             : section === "Verifications" ? "Track your requests and open the reports sellers have shared."
               : "See updates to your verifications and handoffs."}</p>
         </div>
-        {section === "Home" && <div className="task-grid">
-          <button type="button" className="task-cover task-verify" onClick={create}>
-            <span className="task-illustration" aria-hidden /><span className="task-content">
-              <ScanLine size={22} aria-hidden /><strong>Verify a purchase</strong><span>Check a seller’s device against the listing.</span>
-              <span className="task-link">Start a verification<ChevronRight size={17} aria-hidden /></span></span>
-          </button>
-          <Link className="task-cover task-handoff" href="/handoffs">
-            <span className="task-illustration" aria-hidden /><span className="task-content">
-              <PackageCheck size={23} aria-hidden /><strong>Protect a handoff</strong><span>Record condition before and after a handoff.</span>
-              <span className="task-link">Create a handoff<ChevronRight size={17} aria-hidden /></span></span>
-          </Link>
-        </div>}
+        {section === "Home" && <section className="workspace-start" aria-label="Start a check">
+          <div className="workspace-hero">
+            <div className="hero-copy">
+              <h2>Verify a purchase</h2>
+              <p>Collect device readings and exterior photos in a signed report before you buy.</p>
+              <Button onClick={create}>Start a verification</Button>
+            </div>
+          </div>
+          <div className="quick-links">
+            <Link className="quick-link" href="/handoffs"><span className="icon-tile"><PackageCheck size={21} aria-hidden /></span>
+              <span><strong>Protect a handoff</strong><small>Compare condition at checkout and return.</small></span></Link>
+            <Link className="quick-link" href="/advisor"><span className="icon-tile"><Sparkles size={21} aria-hidden /></span>
+              <span><strong>Compare devices</strong><small>Ask Buyer Chat about reports shared with you.</small></span></Link>
+          </div>
+        </section>}
         {section !== "Activity" ? <>
           <Records key={String(!!user)} rows={rows.items} showExamples={!user}
             pending={!!user && rows.isPending} onExample={viewExample} onRecord={viewRecord}
@@ -320,8 +298,7 @@ export function Workspace() {
             {activity.hasNextPage && <LoadMore onClick={() => void activity.fetchNextPage()}
               busy={activity.isFetching} loading={activity.isFetchingNextPage} />}
           </section>}
-      </main>
-    </div>
+    </WorkspaceFrame>
     {overlay === "new" && user && <Dialog title="New verification" onClose={close}>
       <NewVerification listingAssistance={user.listing_assistance} onClose={() => { setSection("Verifications"); close(); }} />
     </Dialog>}
@@ -329,16 +306,19 @@ export function Workspace() {
         if (afterSignIn) { setAfterSignIn(false); setOverlay("new"); }
         else close();
       }} />}
-    {overlay === "create" && <Dialog title="Create" onClose={close}><div className="dialog-options">
-      <button type="button" onClick={create}><span className="icon-tile"><ScanLine size={22} aria-hidden /></span>
-        <span><strong>New verification</strong><span>Ask a seller for a device report.</span></span><ChevronRight size={19} aria-hidden /></button>
-      <Link href="/handoffs" onClick={close}><span className="icon-tile mint"><ClipboardCheck size={22} aria-hidden /></span>
-        <span><strong>New handoff</strong><span>Record and compare device condition.</span></span><ChevronRight size={19} aria-hidden /></Link>
-    </div></Dialog>}
     {overlay === "seller" && <Dialog title="Open a seller link" onClose={close}><SellerLink /></Dialog>}
-    {overlay === "account" && user && <Dialog title="Account" onClose={close}>
+    {overlay === "account" && <Dialog title="Workspace options" onClose={close}>
       <div className="dialog-form"><ErrorNote error={logout.error} />
-        <Button variant="outline" onClick={() => logout.mutate()} disabled={logout.isPending}><LogOut size={17} aria-hidden />Sign out</Button>
+        <div className="search-results">
+          <button type="button" onClick={() => setOverlay("seller")}>Open a seller link</button>
+          <button type="button" onClick={() => { setSection("Activity"); close(); }}>Activity</button>
+          <Link href="/verify">Check a report</Link>
+          {user?.admin && <Link href="/admin">Operator</Link>}
+          <Link href="/about">About ProofScan</Link>
+          <Link href="/help">Help</Link>
+          {user ? <button type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>Sign out</button>
+            : <button type="button" onClick={() => setOverlay("register")}>Create an account</button>}
+        </div>
       </div>
     </Dialog>}
     {overlay === "search" && <Dialog title="Search workspace" onClose={close}>
@@ -347,5 +327,5 @@ export function Workspace() {
     {sample && <Dialog title={sample.label} placement="side" onClose={() => setSample(null)}><div className="detail-body">
       <ReportDetails report={sample.report} photoPath="" /></div></Dialog>}
     {current && <Dialog title={current.label} placement="side" onClose={() => setSelected(null)}><VerificationDetails record={current} /></Dialog>}
-  </div>;
+  </>;
 }

@@ -1,14 +1,15 @@
 "use client";
 
-import { api, ApiError, type Handoff, type HandoffMode, type HandoffReport, type ScanTicket } from "@proofscan/api-client";
+import { api, ApiError, type Angle, type Handoff, type HandoffMode, type HandoffReport, type ScanTicket } from "@proofscan/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ErrorNote, PublicShell, Status } from "./shared";
+import { WorkspaceFrame } from "./workspace-frame";
 import { downloadTicket } from "./seller";
-import { jpeg } from "./photo-capture";
+import { angleName, jpeg, views } from "./photo-capture";
+import { CameraPicker } from "./camera-picker";
 import { EvidenceGallery } from "./evidence-gallery";
 import { LoadMore, useOwnerCollection } from "./owner-collection";
 import { AuthDialog } from "./workspace-forms";
@@ -33,8 +34,8 @@ export function HandoffList() {
     onSuccess: item => { void client.invalidateQueries({ queryKey: ["handoffs"] }); router.push("/handoffs/" + item.id); },
   });
   const needsAccount = session.error instanceof ApiError && session.error.status === 401;
-  return <PublicShell wide>
-    <div className="page-title"><span className="eyebrow"><ClipboardCheck size={16} aria-hidden /> Condition records</span><h1>Protect a handoff</h1>
+  return <WorkspaceFrame page="Handoffs">
+    <div className="page-title"><h1>Protect a handoff</h1>
       <p>Record the condition before an item leaves, then check what changed when it comes back.</p></div>
     <ErrorNote error={(needsAccount ? null : session.error) ?? list.error ?? create.error} />
     {needsAccount && <section className="panel form"><h2>Start a new handoff</h2>
@@ -60,7 +61,7 @@ export function HandoffList() {
       {list.hasNextPage && <LoadMore onClick={() => void list.fetchNextPage()}
         busy={list.isFetching} loading={list.isFetchingNextPage} />}
     </section></div>}
-  </PublicShell>;
+  </WorkspaceFrame>;
 }
 
 function DisplayComparison({ id, item }: { id: string; item: Handoff }) {
@@ -73,7 +74,7 @@ function DisplayComparison({ id, item }: { id: string; item: Handoff }) {
     {report && <>
       <p className={result.data?.valid ? "notice good" : "notice warning"}>{result.data?.valid ? "Signature verified" : "Report signature is invalid"}</p>
       {report.mode === "simulator" && <p className="notice warning">SIMULATED DATA · For demonstration only.</p>}
-      <p>Hardware changes are based on the recorded readings. Exterior condition is recorded by the owner. Device identity is unavailable.</p>
+      <p>Review recorded condition and matching-angle photos before deciding what changed.</p>
       <div className="table-scroll"><table><thead><tr><th scope="col">Check</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Result</th></tr></thead>
       <tbody>{report.differences.map(row => <tr key={row.metric}><th scope="row">{row.metric}</th>
         <td>{conditionLabels[String(row.before)] ?? row.before ?? "Unavailable"}</td><td>{conditionLabels[String(row.after)] ?? row.after ?? "Unavailable"}</td>
@@ -81,9 +82,17 @@ function DisplayComparison({ id, item }: { id: string; item: Handoff }) {
       </tr>)}</tbody></table></div>
       {report.baseline.note && <p><strong>Baseline note</strong> {report.baseline.note}</p>}
       {report.return.note && <p><strong>Return note</strong> {report.return.note}</p>}
-      <EvidenceGallery items={item.photos.map(phase => ({
-        href: "/api/v1/handoffs/" + id + "/photos/" + phase, label: "Open " + phase + " photo",
-      }))} />
+      {report.visual_findings?.length ? <><h3>Exterior comparison</h3>
+        <div className="comparison-views">{report.visual_findings.map(view => <div key={view.angle}>
+          <h4>{angleName[view.angle]}</h4><p>{view.detail}</p>
+          <EvidenceGallery thumbnails items={item.photos.filter(phase => item.photo_views?.[phase]?.includes(view.angle)).map(phase => ({
+            href: "/api/v1/handoffs/" + id + "/photos/" + phase + "?angle=" + view.angle,
+            label: (phase === "baseline" ? "Baseline" : "Return") + " " + view.angle + " view",
+          }))} />
+        </div>)}</div></> : <EvidenceGallery items={item.photos.map(phase => ({
+          href: "/api/v1/handoffs/" + id + "/photos/" + phase, label: "Open " + phase + " photo",
+        }))} />}
+      <p>Inspect the item in person. Matching photos cannot establish physical identity.</p>
       <Link href={"/verify/" + report.report_id} className="quiet-link">Check public signature</Link>
     </>}
   </section>;
@@ -96,6 +105,7 @@ export function HandoffDetail({ id }: { id: string }) {
   const [ticket, setTicket] = useState<ScanTicket | null>(null);
   const [reading, setReading] = useState<File | null>(null);
   const [photo, setPhoto] = useState<File | null>(null);
+  const [selected, setSelected] = useState<Angle | null>(null);
   const item = useQuery({ queryKey: key, queryFn: () => api<Handoff>(path) });
   function saved(updated: Handoff) {
     client.setQueryData(key, updated);
@@ -113,14 +123,14 @@ export function HandoffDetail({ id }: { id: string }) {
   const mark = useMutation({ mutationFn: (action: "activate" | "close") => api<Handoff>(path + "/" + action, {}), onSuccess: saved });
   const invite = useMutation({ mutationFn: () => api<{ url: string }>(path + "/invite", {}) });
   const upload = useMutation({
-    mutationFn: async (file: File) => {
-      const response = await fetch("/api/v1" + path + "/photos", {
+    mutationFn: async ({ file, angle }: { file: File; angle: Angle }) => {
+      const response = await fetch("/api/v1" + path + "/photos?angle=" + angle, {
         method: "POST", headers: { "Content-Type": "image/jpeg" }, body: await jpeg(file),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "Could not save this photo.");
       return data as Handoff;
-    }, onSuccess: saved,
+    }, onSuccess: result => { saved(result); setPhoto(null); setSelected(null); },
   });
   const record = useMutation({
     mutationFn: async (data: FormData) => {
@@ -132,16 +142,18 @@ export function HandoffDetail({ id }: { id: string }) {
       }
       return api<Handoff>(path + "/record", { condition: data.get("condition") ?? "clean", note: data.get("note") ?? "", reading: hardware });
     },
-    onSuccess: updated => { saved(updated); setReading(null); setPhoto(null); setTicket(null); },
+    onSuccess: updated => { saved(updated); setReading(null); setPhoto(null); setTicket(null); setSelected(null); },
   });
   const data = item.data;
   const status = data?.status;
   const scanning = status === "BASELINE_SCANNING" || status === "RETURN_SCANNING";
   const phase = status === "RETURN_SCANNING" ? "return" : "baseline";
+  const angle = selected ?? data?.next_view ?? "front";
+  const baselineAngles = data?.photo_views?.baseline ?? [];
   const stage = status === "REPORT_READY" || status === "CLOSED" ? 3 : status === "RETURN_SCANNING" ? 2
     : status === "BASELINE_CREATED" || status === "ACTIVE_HANDOFF" ? 1 : 0;
 
-  return <PublicShell>
+  return <WorkspaceFrame page="Handoffs">
     <div className="page-title"><Link href="/handoffs" className="quiet-link">Your handoffs</Link><h1>{data?.label ?? "Handoff"}</h1>
       {status && <Status value={handoffLabels[status] ?? status} />}</div>
     {data && <ol className="steps" aria-label="Handoff progress">
@@ -162,13 +174,20 @@ export function HandoffDetail({ id }: { id: string }) {
         <a className={buttonVariants({ variant: "outline" })} href="/collect-windows.ps1" download>PowerShell collector</a>
       </div>}
       {data.mode !== "simulator" && <>
-        <p>{phase === "return" ? "Photograph the same side in similar lighting." : "Take a clear photo of the full front of the asset."}</p>
-        {phase === "return" && data.photos.includes("baseline") && <EvidenceGallery items={[
-          { href: "/api/v1" + path + "/photos/baseline", label: "See baseline photo" },
+        <p>{data.next_view ? "Suggested next view: " + angleName[data.next_view] : "You can add another view or record this checkpoint."} {phase === "return" ? "Match the baseline angle, distance and lighting." : "Show the entire side. Keep faces and serial labels out of frame."}</p>
+        {phase === "return" && (baselineAngles.includes(angle) || (!baselineAngles.length && data.photos.includes("baseline"))) && <EvidenceGallery items={[
+          { href: "/api/v1" + path + "/photos/baseline" + (baselineAngles.length ? "?angle=" + angle : ""), label: "See baseline photo" },
         ]} />}
-        <label>Checkpoint photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={event => setPhoto(event.target.files?.[0] ?? null)} /></label>
-        <Button variant="outline" disabled={!photo || upload.isPending} onClick={() => { if (photo) upload.mutate(photo); }}>Check and save photo</Button>
-        {data.photos.includes(phase) && <p role="status">Checkpoint photo saved.</p>}
+        <label>Checkpoint view<select value={angle} disabled={upload.isPending} onChange={event => {
+          setSelected(event.target.value as Angle); setPhoto(null); upload.reset();
+        }}>{views.map(view => <option key={view} value={view}>{angleName[view]}</option>)}</select></label>
+        <CameraPicker key={phase + ":" + angle + ":" + (data.photo_views?.[phase]?.length ?? 0)}
+          label="Checkpoint photo" onPhoto={setPhoto} disabled={upload.isPending} />
+        <Button variant="outline" disabled={!photo || upload.isPending} onClick={() => { if (photo) upload.mutate({ file: photo, angle }); }}>
+          {upload.isPending ? "Checking photo…" : "Check and save photo"}
+        </Button>
+        {data.capture_feedback && <p role="status"><strong>{angleName[data.capture_feedback.angle]}</strong> {data.capture_feedback.detail}</p>}
+        {!!data.photo_views?.[phase]?.length && <p>Saved views: {data.photo_views[phase].map(view => angleName[view]).join(", ")}</p>}
       </>}
       <form className="form" onSubmit={event => { event.preventDefault(); record.mutate(new FormData(event.currentTarget)); }}>
         {data.mode === "windows" && <label>Windows scan file<input type="file" accept=".json,application/json" onChange={event => setReading(event.target.files?.[0] ?? null)} required /></label>}
@@ -195,7 +214,7 @@ export function HandoffDetail({ id }: { id: string }) {
       <DisplayComparison id={id} item={data} />
       {status === "REPORT_READY" && <Button variant="outline" onClick={() => mark.mutate("close")} disabled={mark.isPending}>Close handoff</Button>}
     </>}
-  </PublicShell>;
+  </WorkspaceFrame>;
 }
 
 export function AcceptHandoff({ id }: { id: string }) {
@@ -203,7 +222,7 @@ export function AcceptHandoff({ id }: { id: string }) {
     mutationFn: () => api("/handoffs/" + id + "/accept", { token: window.location.hash.slice(1) }),
     onSuccess: () => window.history.replaceState(null, "", window.location.pathname),
   });
-  return <PublicShell><section className="panel form">
+  return <PublicShell isGuest><section className="panel form">
     <h1>Acknowledge a handoff</h1>
     <p>Accept to record when you acknowledged receiving the item.</p>
     <ErrorNote error={accept.error} />

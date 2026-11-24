@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import timedelta
 from typing import Annotated
 
@@ -14,6 +15,10 @@ from .providers import model_provider
 from .schemas import Claims, Input
 
 router = APIRouter(tags=["listing assistance"])
+CONTACT = re.compile(
+    r"https?://\S+|www\.\S+|[\w.+-]+@[\w.-]+\.\w+|(?<!\w)\+?\d(?:[ .()\-]*\d){8,14}(?!\w)",
+    re.IGNORECASE,
+)
 
 
 class Listing(Input):
@@ -43,7 +48,7 @@ async def suggest(data: Listing, user: Owner, db: DB) -> Claims | JSONResponse:
     await db.commit()
     try:
         async with asyncio.timeout(15):
-            result = await provider.suggest(data.listing)
+            result = await provider.suggest(CONTACT.sub("[removed]", data.listing))
     except (TimeoutError, httpx.HTTPError, KeyError, ValueError, TypeError, IndexError, OverflowError):
         return JSONResponse(
             {"detail": "Listing assistance is unavailable. Enter the claims manually."}, status_code=503

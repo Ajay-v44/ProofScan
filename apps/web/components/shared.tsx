@@ -1,19 +1,30 @@
-import { CircleAlert, LayoutGrid, ScanLine, ShieldCheck } from "lucide-react";
+import { CircleAlert, LayoutGrid, ShieldCheck } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { version } from "../package.json";
 
 export function Brand() {
-  return <Link href="/" className="brand"><span className="brand-mark"><ScanLine aria-hidden size={24} /></span>ProofScan</Link>;
+  return <Link href="/" className="brand"><Image src="/brand/proofscan-mark.webp" width={36} height={36} alt="" className="brand-mark" unoptimized />ProofScan</Link>;
 }
 
-export function PublicShell({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
+export function ProductFooter() {
+  return <footer className="product-footer"><nav aria-label="Product information">
+    <Link href="/about">About ProofScan</Link><Link href="/help">Help</Link><Link href="/privacy">Privacy</Link>
+  </nav><span>Web version {version}</span></footer>;
+}
+
+export function PublicShell({ children, wide = false, isGuest = false }: { children: ReactNode; wide?: boolean; isGuest?: boolean }) {
   return <div className="public-shell">
     <a className="skip-link" href="#main">Skip to content</a>
-    <header className="public-head"><Brand /><nav className="public-navigation" aria-label="ProofScan">
+    <header className="public-head"><div className="public-head-inner"><Brand /><nav className="public-navigation" aria-label="ProofScan">
+      {isGuest ? <Link className="nav-link" href="/help">Help</Link> : <>
       <Link className="nav-link" href="/"><LayoutGrid size={17} aria-hidden />Workspace</Link>
       <Link className="nav-link" href="/verify"><ShieldCheck size={17} aria-hidden />Check a report</Link>
-    </nav></header>
-    <main id="main" className={"public-main" + (wide ? " public-wide" : "")}>{children}</main>
+      </>}
+    </nav></div></header>
+    <main id="main" tabIndex={-1} className={"public-main" + (wide ? " public-wide" : "")}>{children}</main>
+    <ProductFooter />
   </div>;
 }
 

@@ -57,11 +57,11 @@ export default function Workspace() {
 
   return <SafeAreaView style={workspaceStyles.screen}>
     <View style={workspaceStyles.bar}>
-      <Text accessibilityRole="header" style={workspaceStyles.label}>Workspace</Text>
+      <Text accessibilityRole="header" style={workspaceStyles.label}>Device tools</Text>
       <View style={workspaceStyles.tools}>
-        <Pressable accessibilityRole="button" onPress={() => router.push("/privacy")}
+        <Pressable accessibilityRole="button" onPress={() => router.push("/about")}
           style={({ pressed }) => [workspaceStyles.tool, pressed && workspaceStyles.pressed]}>
-          <Text style={workspaceStyles.toolText}>Privacy</Text>
+          <Text style={workspaceStyles.toolText}>About</Text>
         </Pressable>
         <Pressable accessibilityRole="button" onPress={openScanner}
           style={({ pressed }) => [workspaceStyles.tool, workspaceStyles.scanner, pressed && workspaceStyles.pressed]}>
@@ -109,9 +109,9 @@ export default function Workspace() {
 
 const workspaceStyles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface },
-  bar: { minHeight: 57, paddingVertical: 4, paddingHorizontal: 16, gap: 10, flexDirection: "row", flexWrap: "wrap", alignItems: "center",
+  bar: { minHeight: 54, paddingVertical: 3, paddingHorizontal: 14, gap: 6, flexDirection: "row", flexWrap: "wrap", alignItems: "center",
     justifyContent: "space-between", borderBottomWidth: 1, borderBottomColor: colors.line },
-  label: { color: colors.ink, fontWeight: "700", fontSize: 15 },
+  label: { color: colors.ink, fontWeight: "800", fontSize: 16 },
   tools: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
   tool: { minHeight: 48, justifyContent: "center", paddingHorizontal: 12, borderRadius: radii.control },
   scanner: { backgroundColor: colors.brandTint },

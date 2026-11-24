@@ -5,23 +5,23 @@
     "version": "0.1.0",
     "scheme": "proofscan",
     "icon": "./assets/icon.png",
-    "backgroundColor": "#f7f7fa",
+    "backgroundColor": "#f3f5f7",
     "platforms": [
       "ios",
       "android"
     ],
-    "orientation": "portrait",
+    "orientation": "default",
     "userInterfaceStyle": "light",
     "ios": {
-      "bundleIdentifier": "com.proofscan.mobile"
+      "bundleIdentifier": "com.proofscan.mobile",
+      "supportsTablet": true
     },
     "android": {
       "package": "com.proofscan.mobile",
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon-adaptive.png",
-        "monochromeImage": "./assets/icon-adaptive.png",
-        "backgroundColor": "#5131bb"
+        "backgroundColor": "#101e2c"
       },
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
@@ -39,7 +39,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#5131bb",
+          "backgroundColor": "#101e2c",
           "image": "./assets/splash-mark.png",
           "imageWidth": 152,
           "resizeMode": "contain"

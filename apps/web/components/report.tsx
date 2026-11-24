@@ -43,7 +43,7 @@ export function ReportDetails({ report, photoPath }: { report: Report; photoPath
     </table></div>}
     {!!report.visual_evidence?.length && <div>
       <h2>Exterior photos</h2>
-      <EvidenceGallery items={report.visual_evidence.map(photo => ({
+      <EvidenceGallery thumbnails items={report.visual_evidence.map(photo => ({
         href: "/api/v1" + photoPath + "/" + photo.id, label: "Open " + photo.angle + " photo",
         width: photo.width, height: photo.height,
       }))} />
@@ -57,6 +57,7 @@ export function ReportDetails({ report, photoPath }: { report: Report; photoPath
       <dt>Reported device</dt><dd>{[hardware.manufacturer, hardware.model].filter(Boolean).join(" ") || "Unavailable"}</dd>
       <dt>Graphics</dt><dd>{hardware.gpu.join(", ") || "Unavailable"}</dd>
       <dt>Device identity</dt><dd>Unavailable</dd>
+      <dt>Report format</dt><dd>Version {report.schema_version}</dd>
       <dt>Market pricing</dt><dd>{price && format
         ? format.formatRange(price.low, price.high) + (price.source === "SIMULATED" ? " · Demo fixture" : " · " + price.sample_size + " recent comparables")
         : "Unavailable"}</dd>

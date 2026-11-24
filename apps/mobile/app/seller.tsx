@@ -1,4 +1,4 @@
-import { api, ApiError, type Angle, type DevicePlan, type GuestView, type ScanTicket } from "@proofscan/api-client";
+import { api, ApiError, type Angle, type CaptureLink, type DevicePlan, type GuestView, type ScanTicket } from "@proofscan/api-client";
 import { colors, radii } from "@proofscan/design-tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Device from "expo-device";
@@ -8,7 +8,7 @@ import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Image, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Linking, Platform, Pressable, Share, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { runDeviceTool, type MobileReadings } from "../src/device-tools";
 import { apiOrigin, useSession } from "../src/session";
 import { Action, Failure, Panel, Screen, StepRail, styles } from "../src/ui";
@@ -26,7 +26,18 @@ function sellerFetch(url: string, init: Parameters<typeof expoFetch>[1]) {
   return expoFetch(url, { ...init, credentials: "omit", redirect: "error", signal: init?.signal ?? AbortSignal.timeout(30_000) });
 }
 
+function ReviewPhoto({ uri, angle, token, paired }: { uri: string; angle: Angle; token: string; paired: boolean }) {
+  const [failed, setFailed] = useState(false);
+  return <View style={[sellerStyles.photoCard, paired && sellerStyles.photoPaired]}>
+    {failed ? <Text style={styles.text}>Photo unavailable</Text> : <Image
+      accessibilityLabel={angleLabel[angle] + " of device"} style={sellerStyles.evidence} resizeMode="contain"
+      onError={() => setFailed(true)} source={{ uri, headers: { "X-Guest-Token": token } }} />}
+    <Text style={styles.fieldLabel}>{angleLabel[angle]}</Text>
+  </View>;
+}
+
 export default function Seller() {
+  const { width, fontScale } = useWindowDimensions();
   const router = useRouter();
   const client = useQueryClient();
   const session = useSession(state => state.seller);
@@ -37,6 +48,7 @@ export default function Seller() {
   const [angle, setAngle] = useState<Angle>("front");
   const [cameraSettingsNeeded, setCameraSettingsNeeded] = useState(false);
   const [cameraSettingsError, setCameraSettingsError] = useState<unknown>(null);
+  const [localCamera, setLocalCamera] = useState(false);
   const [plan, setPlan] = useState<DevicePlan | null>(null);
   const platform = Platform.OS === "ios" ? "ios" : "android";
   const path = "/guest/" + session?.id;
@@ -53,7 +65,11 @@ export default function Seller() {
 
   const guest = useQuery({
     queryKey: key, enabled: !!session,
-    queryFn: () => call<GuestView>("/exchange", { token: session?.guestToken }),
+    queryFn: async () => {
+      const current = await call<GuestView>("");
+      return current.verification.status === "LINK_CREATED"
+        ? call<GuestView>("/exchange", { token: session?.guestToken }) : current;
+    },
   });
   const save = (value: GuestView) => client.setQueryData(key, value);
   const consent = useMutation({
@@ -68,6 +84,15 @@ export default function Seller() {
     return fresh;
   }
 
+  const cameraLink = useMutation({
+    mutationFn: async () => {
+      await scanTicket();
+      const link = await call<CaptureLink>("/photo-link", {});
+      await Share.share({ message: link.url });
+    },
+    onSettled: () => guest.refetch(),
+  });
+
   const photo = useMutation({
     mutationFn: async () => {
       if (!session) throw new Error("Open a private seller link first.");
@@ -75,7 +100,7 @@ export default function Seller() {
       let permission = await ImagePicker.getCameraPermissionsAsync();
       if (!permission.granted && permission.canAskAgain) permission = await ImagePicker.requestCameraPermissionsAsync();
       setCameraSettingsNeeded(!permission.granted && !permission.canAskAgain);
-      if (!permission.granted) throw new Error("Allow camera access to take an exterior photo. You can continue without photos.");
+      if (!permission.granted) throw new Error("Allow camera access to take an exterior photo.");
       const captured = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.8, exif: false });
       if (captured.canceled) return;
       const asset = captured.assets[0];
@@ -100,7 +125,13 @@ export default function Seller() {
           const data = await response.json().catch(() => ({}));
           throw new Error(data.detail ?? "The photo could not be saved.");
         }
+        return angle;
       } finally { clean(processed); clean(original); }
+    },
+    onSuccess: captured => {
+      if (!captured) return;
+      const next = angles.find(view => view !== captured && !guest.data?.photos.some(saved => saved.angle === view));
+      if (next) setAngle(next);
     },
     onSettled: () => client.invalidateQueries({ queryKey: key }),
   });
@@ -162,19 +193,21 @@ export default function Seller() {
   const step = status === "COMPLETED" || status === "DECLINED" ? 3 : status === "SELLER_REVIEW" ? 2
     : status === "CONSENTED" || status === "SCANNING" ? 1 : 0;
   const preview = guest.data?.preview;
-  const busy = consent.isPending || photo.isPending || submit.isPending || decision.isPending ||
+  const busy = consent.isPending || photo.isPending || cameraLink.isPending || submit.isPending || decision.isPending ||
     prepare.isPending || skipPlan.isPending;
   const collecting = status === "CONSENTED" || status === "SCANNING";
   const linkUnavailable = guest.error instanceof ApiError && guest.error.status === 404;
   const savedAngles = new Set(guest.data?.photos.map(item => item.angle));
+  const requiresPhotos = guest.data?.verification.require_exterior === true;
+  const missingPhotos = requiresPhotos && (!savedAngles.has("front") || !savedAngles.has("back"));
   const stageError = status === "SELLER_OPENED" ? consent.error
-    : collecting ? submit.error ?? prepare.error ?? skipPlan.error ?? photo.error ?? cameraSettingsError
+    : collecting ? submit.error ?? prepare.error ?? skipPlan.error
       : status === "SELLER_REVIEW" ? decision.error : null;
 
   return <Screen>
     <View style={styles.intro}>
       <Text accessibilityRole="header" style={styles.title}>{guest.data?.verification.label ?? "Your verification"}</Text>
-      <Text style={styles.text}>Review your readings and photos before sharing a report.</Text>
+      <Text style={styles.text}>{guest.data?.verification.is_pickup ? "Capture fresh evidence from the device in your hands." : "Review your readings and photos before sharing a report."}</Text>
     </View>
     {status && !linkUnavailable && <StepRail steps={steps} current={step} />}
     <Failure error={restoreError ?? guest.error ?? stageError} />
@@ -188,13 +221,13 @@ export default function Seller() {
     {!linkUnavailable && <>
     {status === "SELLER_OPENED" && <Panel>
       <Text style={styles.heading}>Review what we collect</Text>
-      <Text style={styles.text}>ProofScan reads device model and memory where available. You can add exterior photos, then review everything before the buyer sees it.</Text>
+      <Text style={styles.text}>ProofScan reads device model and memory where available. {requiresPhotos ? "Take front and back photos, then review everything before sharing." : "You can add exterior photos before reviewing."}</Text>
       <Action disabled={busy} onPress={() => consent.mutate()}>{consent.isPending ? "Saving consent…" : "Agree and continue"}</Action>
     </Panel>}
     {collecting && <>
       <Panel>
         <Text accessibilityRole="header" style={styles.heading}>Exterior photos</Text>
-        <Text style={styles.text}>Optional. Choose a side and photograph the entire device in even light.</Text>
+        <Text style={styles.text}>{requiresPhotos ? "Use another phone or tablet to photograph the front and back of this device." : "Use a second device to photograph this device."} Keep faces and serial labels out of frame.</Text>
         <View accessibilityRole="radiogroup" style={sellerStyles.angleGroup}>
           {angles.map(item => {
             const selected = item === angle;
@@ -206,9 +239,15 @@ export default function Seller() {
             </Pressable>;
           })}
         </View>
-        <Action quiet disabled={busy} onPress={() => { submit.reset(); photo.mutate(); }}>
+        <Action disabled={busy} onPress={() => cameraLink.mutate()}>{cameraLink.isPending ? "Opening share options…" : "Share camera link"}</Action>
+        <Text style={styles.text}>The link lasts up to 15 minutes. Refresh after the photos are saved.</Text>
+        <Action quiet disabled={busy || guest.isFetching} onPress={() => void guest.refetch()}>{guest.isFetching ? "Refreshing…" : "Refresh photos"}</Action>
+        <Failure error={cameraLink.error} />
+        <Action quiet disabled={busy} onPress={() => setLocalCamera(value => !value)}>{localCamera ? "Hide this camera" : "Use this camera"}</Action>
+        {localCamera && <Action quiet disabled={busy} onPress={() => { submit.reset(); photo.mutate(); }}>
           {photo.isPending ? "Saving photo…" : savedAngles.has(angle) ? "Retake photo" : "Take photo"}
-        </Action>
+        </Action>}
+        <Failure error={photo.error ?? cameraSettingsError} />
         {cameraSettingsNeeded && <Action quiet onPress={() => void Linking.openSettings().catch(() => {
           setCameraSettingsError(new Error("Open your phone’s settings and allow camera access for ProofScan."));
         })}>Open camera settings</Action>}
@@ -218,31 +257,45 @@ export default function Seller() {
         <Text style={styles.text}>ProofScan reads the model and memory when available.</Text>
         {plan ? <>
           <Text style={styles.text}>Approve local model and memory checks. If the model name is unavailable, ProofScan may try the operating system’s model code. The planner may send check names and outcomes to Moonshot. You review the actual readings before sharing.</Text>
-          <Action disabled={busy} onPress={() => { photo.reset(); submit.mutate(plan); }}>
+          <Action disabled={busy || missingPhotos} onPress={() => { photo.reset(); submit.mutate(plan); }}>
             {submit.isPending ? "Collecting…" : "Approve checks and collect"}
           </Action>
           <Action quiet disabled={busy} onPress={() => skipPlan.mutate(plan)}>Skip guided checks</Action>
         </> : <>
-          <Action disabled={busy} onPress={() => { submit.reset(); prepare.mutate(); }}>
+          <Action disabled={busy || missingPhotos} onPress={() => { submit.reset(); prepare.mutate(); }}>
             {prepare.isPending ? "Preparing checks…" : "Plan guided scan"}
           </Action>
-          <Action quiet disabled={busy} onPress={() => { photo.reset(); prepare.reset(); skipPlan.reset(); submit.mutate(null); }}>
+          <Action quiet disabled={busy || missingPhotos} onPress={() => { photo.reset(); prepare.reset(); skipPlan.reset(); submit.mutate(null); }}>
             {submit.isPending ? "Collecting…" : "Use basic collection"}
           </Action>
         </>}
+        {missingPhotos && <Text style={styles.text}>Save front and back photos before collecting readings.</Text>}
       </Panel>
     </>}
     {status === "SELLER_REVIEW" && preview && <Panel>
-      <Text style={styles.heading}>Review before sharing</Text>
-      <Text style={styles.text}>{[preview.hardware.manufacturer, preview.hardware.model].filter(Boolean).join(" ") || "Model unavailable"}</Text>
-      <Text style={styles.text}>{preview.hardware.memory_gib ? preview.hardware.memory_gib + " GiB memory" : "Memory unavailable"}</Text>
-      {preview.findings.map(item => <Text key={item.metric} style={styles.text}>
-        {item.metric} · {item.observed ?? "Unavailable"} · {item.status.toLowerCase()}
-      </Text>)}
-      {!!preview.visual_evidence?.length && session && <Text style={styles.heading}>Exterior photos</Text>}
-      {preview.visual_evidence?.map(item => session ? <Image key={item.id} accessibilityLabel={item.angle + " of device"}
-        style={sellerStyles.evidence} resizeMode="contain"
-        source={{ uri: apiOrigin() + "/api/v1" + path + "/photos/" + item.id, headers: { "X-Guest-Token": session.guestToken } }} /> : null)}
+      <Text accessibilityRole="header" style={styles.heading}>Review before sharing</Text>
+      <View style={sellerStyles.readings}>{[
+        ["Reported device", [preview.hardware.manufacturer, preview.hardware.model].filter(Boolean).join(" ") || "Unavailable"],
+        ["Memory", preview.hardware.memory_gib ? preview.hardware.memory_gib + " GiB" : "Unavailable"],
+      ].map(([label, value]) => <View key={label} style={sellerStyles.reading}>
+        <Text style={styles.fieldLabel}>{label}</Text><Text style={styles.text}>{value}</Text>
+      </View>)}</View>
+      {!!preview.findings.length && <>
+        <Text accessibilityRole="header" style={styles.heading}>Listing comparison</Text>
+        {preview.findings.map(item => <View key={item.metric} style={sellerStyles.finding}>
+          <Text style={styles.fieldLabel}>{item.metric}</Text>
+          <Text style={styles.text}>Claimed {item.claimed} · Observed {item.observed ?? "unavailable"}</Text>
+          <Text style={[styles.fieldLabel, item.status === "MISMATCH" ? sellerStyles.difference : item.status === "MATCH" ? sellerStyles.match : null]}>
+            {item.status === "MATCH" ? "Matches listing" : item.status === "MISMATCH" ? "Differs from listing" : "Check unavailable"}
+          </Text>
+        </View>)}
+      </>}
+      {!!preview.visual_evidence?.length && session && <>
+        <Text accessibilityRole="header" style={styles.heading}>Exterior photos</Text>
+        <View style={sellerStyles.angleGroup}>{preview.visual_evidence.map(item => <ReviewPhoto key={item.id} angle={item.angle}
+          uri={apiOrigin() + "/api/v1" + path + "/photos/" + item.id} token={session.guestToken}
+          paired={width >= 360 && fontScale <= 1.3} />)}</View>
+      </>}
       <Action disabled={busy} onPress={() => decision.mutate("share")}>{decision.isPending ? "Saving decision…" : "Share signed report"}</Action>
       <Action quiet disabled={busy} onPress={() => decision.mutate("decline")}>Decline to share</Action>
     </Panel>}
@@ -266,5 +319,12 @@ const sellerStyles = StyleSheet.create({
   selectedLabel: { color: colors.brand },
   anglePressed: { opacity: 0.7 },
   saved: { alignSelf: "flex-start", marginTop: 4, color: colors.mintInk, fontSize: 13, fontWeight: "700" },
-  evidence: { height: 185, width: "100%", borderRadius: radii.control, backgroundColor: colors.canvas },
+  readings: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  reading: { flexBasis: 128, flexGrow: 1, gap: 3, padding: 10, backgroundColor: colors.canvas, borderRadius: radii.control },
+  finding: { borderTopWidth: 1, borderTopColor: colors.line, paddingTop: 10, gap: 3 },
+  match: { color: colors.mintInk },
+  difference: { color: colors.creamInk },
+  photoCard: { flexBasis: "100%", flexGrow: 1, minWidth: 0, gap: 6, padding: 8, borderWidth: 1, borderColor: colors.line, borderRadius: radii.control },
+  photoPaired: { flexBasis: "46%" },
+  evidence: { aspectRatio: 4 / 3, width: "100%", borderRadius: radii.control, backgroundColor: colors.canvas },
 });

@@ -5,19 +5,29 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import Select, exists, func, select
 
+from .agent.usage import record_usage
 from .auth import DB, Owner
 from .config import settings
 from .db import Notification, now
 from .domain import InvalidTransition
-from .handoff_models import Acceptance, Asset, Checkpoint, Comparison, ComparisonInvalidation, Handoff
+from .handoff_models import (
+    Acceptance,
+    Asset,
+    Checkpoint,
+    CheckpointPhoto,
+    Comparison,
+    ComparisonInvalidation,
+    Handoff,
+)
 from .pagination import PAGE_SIZE, before_record
-from .schemas import GuestExchange, Hardware, Input, Label, ScanTicket, Submission
+from .pickup import VIEWS
+from .schemas import Angle, GuestExchange, Hardware, Input, Label, ScanTicket, Submission, VisualFinding
 from .services import fixture_hardware, new_token, signer, token_hash
 from .signing import Signature
-from .visual import photo_work, process_photo
+from .visual import compare_images, photo_work, process_photo
 
 router = APIRouter(prefix="/handoffs", tags=["handoffs"])
 Mode = Literal["windows", "visual", "simulator"]
@@ -66,6 +76,9 @@ class HandoffView(BaseModel):
     receiver_accepted: bool
     report_id: UUID | None
     photos: list[str]
+    photo_views: dict[str, list[Angle]] = Field(default_factory=dict)
+    next_view: Angle | None = None
+    capture_feedback: VisualFinding | None = None
 
 
 class CompleteCheckpoint(Input):
@@ -82,7 +95,9 @@ async def load(handoff_id: UUID, owner: UUID, db: DB, *, lock: bool = False) -> 
     return item
 
 
-def handoff_details() -> Select[tuple[Handoff, str, bool, UUID | None, list[str] | None]]:
+def handoff_details() -> Select[
+    tuple[Handoff, str, bool, UUID | None, list[str] | None, list[str] | None]
+]:
     accepted = exists().where(Acceptance.handoff_id == Handoff.id, Acceptance.accepted_at.is_not(None))
     report = select(Comparison.id).where(Comparison.handoff_id == Handoff.id).scalar_subquery()
     photos = (
@@ -94,12 +109,36 @@ def handoff_details() -> Select[tuple[Handoff, str, bool, UUID | None, list[str]
         )
         .scalar_subquery()
     )
-    return select(Handoff, Asset.label, accepted, report, photos).join(Asset)
+    angled = (
+        select(func.array_agg(func.concat(Checkpoint.phase, ":", CheckpointPhoto.angle)))
+        .select_from(Checkpoint)
+        .join(CheckpointPhoto)
+        .where(Checkpoint.handoff_id == Handoff.id, CheckpointPhoto.expires_at > now())
+        .scalar_subquery()
+    )
+    return select(Handoff, Asset.label, accepted, report, photos, angled).join(Asset)
 
 
 def handoff_view(
-    item: Handoff, label: str, accepted: bool, report_id: UUID | None, photos: list[str] | None
+    item: Handoff,
+    label: str,
+    accepted: bool,
+    report_id: UUID | None,
+    photos: list[str] | None,
+    angled: list[str] | None,
 ) -> HandoffView:
+    views = {
+        phase: [angle for angle in VIEWS if f"{phase}:{angle}" in (angled or ())]
+        for phase in ("baseline", "return")
+    }
+    phase = {
+        State.BASELINE_SCANNING: "baseline",
+        State.RETURN_SCANNING: "return",
+    }.get(State(item.status))
+    suggested = None
+    if phase is not None:
+        priority = tuple(views["baseline"]) if phase == "return" and views["baseline"] else VIEWS
+        suggested = next((angle for angle in priority if angle not in views[phase]), None)
     return HandoffView.model_validate(
         {
             "id": item.id,
@@ -109,7 +148,11 @@ def handoff_view(
             "status": item.status,
             "receiver_accepted": accepted,
             "report_id": report_id,
-            "photos": sorted(photos or ()),
+            "photos": sorted(
+                set(photos or ()).union(phase for phase, angles in views.items() if angles)
+            ),
+            "photo_views": views,
+            "next_view": suggested,
         }
     )
 
@@ -196,7 +239,9 @@ async def current_checkpoint(item: Handoff, db: DB, *, create: bool = False) -> 
 
 
 @router.post("/{handoff_id}/photos", response_model=HandoffView)
-async def save_checkpoint_photo(handoff_id: UUID, request: Request, owner: Owner, db: DB) -> HandoffView:
+async def save_checkpoint_photo(
+    handoff_id: UUID, request: Request, owner: Owner, db: DB, angle: Angle | None = None
+) -> HandoffView:
     item = await load(handoff_id, owner, db, lock=True)
     if item.mode == "simulator":
         raise HTTPException(422, "The simulator uses its own visual condition.")
@@ -204,18 +249,91 @@ async def save_checkpoint_photo(handoff_id: UUID, request: Request, owner: Owner
     try:
         photo = await photo_work.run(process_photo, await request.body())
     except ValueError as exc:
+        await record_usage(db, "handoff_visual", accepted=False)
+        await db.commit()
         raise HTTPException(422, str(exc)) from exc
-    checkpoint.jpeg = photo.jpeg
-    checkpoint.photo_digest = photo.digest
-    checkpoint.photo_expires_at = now() + timedelta(days=settings().evidence_retention_days)
-    return await describe(item, db)
+    expiry = now() + timedelta(days=settings().evidence_retention_days)
+    feedback = None
+    if angle is None:
+        checkpoint.jpeg = photo.jpeg
+        checkpoint.photo_digest = photo.digest
+        checkpoint.photo_expires_at = expiry
+    else:
+        saved = await db.scalar(
+            select(CheckpointPhoto).where(
+                CheckpointPhoto.checkpoint_id == checkpoint.id, CheckpointPhoto.angle == angle
+            )
+        )
+        repeated = await db.scalar(
+            select(CheckpointPhoto.id).where(
+                CheckpointPhoto.checkpoint_id == checkpoint.id,
+                CheckpointPhoto.angle != angle,
+                CheckpointPhoto.digest == photo.digest,
+                CheckpointPhoto.expires_at > now(),
+            )
+        )
+        if repeated is not None:
+            raise HTTPException(422, "Use a freshly captured view for each side.")
+        if saved is None:
+            saved = CheckpointPhoto(checkpoint_id=checkpoint.id, angle=angle)
+            db.add(saved)
+        saved.jpeg = photo.jpeg
+        saved.digest = photo.digest
+        saved.descriptor = photo.descriptor
+        saved.expires_at = expiry
+        if checkpoint.phase == "return":
+            baseline = (
+                await db.execute(
+                    select(CheckpointPhoto.jpeg, CheckpointPhoto.descriptor)
+                    .join(Checkpoint)
+                    .where(
+                        Checkpoint.handoff_id == item.id,
+                        Checkpoint.phase == "baseline",
+                        CheckpointPhoto.angle == angle,
+                        CheckpointPhoto.expires_at > now(),
+                    )
+                )
+            ).one_or_none()
+            if baseline is not None:
+                status, detail = await photo_work.run(
+                    compare_images,
+                    baseline.jpeg,
+                    photo.jpeg,
+                    baseline.descriptor,
+                    photo.descriptor,
+                )
+                feedback = VisualFinding(angle=angle, status=status, detail=detail)
+    await record_usage(db, "handoff_visual", accepted=True)
+    result = await describe(item, db)
+    result.capture_feedback = feedback
+    if feedback is not None and feedback.status in {"retake", "reused"}:
+        result.next_view = angle
+    return result
 
 
 @router.get("/{handoff_id}/photos/{phase}", response_class=Response)
 async def checkpoint_photo(
-    handoff_id: UUID, phase: Literal["baseline", "return"], owner: Owner, db: DB
+    handoff_id: UUID,
+    phase: Literal["baseline", "return"],
+    owner: Owner,
+    db: DB,
+    angle: Angle | None = None,
 ) -> Response:
     await load(handoff_id, owner, db)
+    if angle is not None:
+        jpeg = await db.scalar(
+            select(CheckpointPhoto.jpeg)
+            .join(Checkpoint)
+            .where(
+                Checkpoint.handoff_id == handoff_id,
+                Checkpoint.phase == phase,
+                CheckpointPhoto.angle == angle,
+                CheckpointPhoto.expires_at > now(),
+            )
+        )
+        if jpeg is None:
+            raise HTTPException(404, "This photo is unavailable or has expired.")
+        return Response(content=jpeg, media_type="image/jpeg")
     jpeg = await db.scalar(
         select(Checkpoint.jpeg).where(
             Checkpoint.handoff_id == handoff_id,
@@ -228,13 +346,15 @@ async def checkpoint_photo(
     return Response(content=jpeg, media_type="image/jpeg")
 
 
-def exercise_reading(item: Handoff, checkpoint: Checkpoint, data: CompleteCheckpoint) -> Hardware | None:
+def exercise_reading(
+    item: Handoff, checkpoint: Checkpoint, data: CompleteCheckpoint, *, has_photo: bool
+) -> Hardware | None:
     if item.mode == "simulator":
         if not settings().enable_simulator:
             raise HTTPException(403, "The simulator is disabled.")
         return fixture_hardware("verified" if checkpoint.phase == "baseline" else "misrepresented")
     if item.mode == "visual":
-        if checkpoint.photo_digest is None:
+        if not has_photo:
             raise HTTPException(422, "Add a checkpoint photo first.")
         if data.reading:
             raise HTTPException(422, "This checkpoint uses a photo and an owner condition record.")
@@ -299,7 +419,20 @@ async def complete_checkpoint(
 ) -> HandoffView:
     item = await load(handoff_id, owner, db, lock=True)
     record = await current_checkpoint(item, db)
-    hardware = exercise_reading(item, record, data)
+    has_angle = await db.scalar(
+        select(CheckpointPhoto.id)
+        .where(
+            CheckpointPhoto.checkpoint_id == record.id,
+            CheckpointPhoto.expires_at > now(),
+        )
+        .limit(1)
+    )
+    has_legacy = (
+        record.photo_expires_at is not None
+        and record.photo_expires_at > now()
+        and record.photo_digest is not None
+    )
+    hardware = exercise_reading(item, record, data, has_photo=has_angle is not None or has_legacy)
     record.hardware = hardware.model_dump(mode="json") if hardware else None
     record.condition = (
         ("clean" if record.phase == "baseline" else "visible_wear")
@@ -334,6 +467,7 @@ async def complete_checkpoint(
                     "status": "MISMATCH",
                 }
             )
+        visual_findings, digests = await compare_checkpoint_views(db, before.id, record.id)
         payload = {
             "schema_version": 1,
             "kind": "handoff",
@@ -344,15 +478,18 @@ async def complete_checkpoint(
             "mode": item.mode,
             "identity_confidence": "UNAVAILABLE",
             "differences": differences,
+            "visual_findings": [finding.model_dump(mode="json") for finding in visual_findings],
             "baseline": {
                 "recorded_at": before.recorded_at.isoformat(),
                 "note": before.note,
                 "photo_digest": before.photo_digest,
+                "photo_digests": digests.get(before.id, {}),
             },
             "return": {
                 "recorded_at": record.recorded_at.isoformat(),
                 "note": record.note,
                 "photo_digest": record.photo_digest,
+                "photo_digests": digests.get(record.id, {}),
             },
         }
         signature = signer().sign(payload)
@@ -369,6 +506,41 @@ async def complete_checkpoint(
         db.add(Notification(owner_id=owner, handoff_id=item.id, event="HANDOFF_REPORT_READY"))
         move(item, State.REPORT_READY)
     return await describe(item, db)
+
+
+async def compare_checkpoint_views(
+    db: DB, before: UUID, after: UUID
+) -> tuple[list[VisualFinding], dict[UUID, dict[str, str]]]:
+    rows = await db.execute(
+        select(
+            CheckpointPhoto.checkpoint_id,
+            CheckpointPhoto.angle,
+            CheckpointPhoto.digest,
+            CheckpointPhoto.jpeg,
+            CheckpointPhoto.descriptor,
+            CheckpointPhoto.expires_at,
+        ).where(CheckpointPhoto.checkpoint_id.in_([before, after]))
+    )
+    photos = {(row.checkpoint_id, row.angle): row for row in rows}
+    digests: dict[UUID, dict[str, str]] = {}
+    for (checkpoint, angle), row in photos.items():
+        digests.setdefault(checkpoint, {})[angle] = row.digest
+    findings = []
+    for angle in VIEWS:
+        left, right = photos.get((before, angle)), photos.get((after, angle))
+        if left is None and right is None:
+            continue
+        first = left.jpeg if left is not None and left.expires_at > now() else None
+        second = right.jpeg if right is not None and right.expires_at > now() else None
+        status, detail = await photo_work.run(
+            compare_images,
+            first,
+            second,
+            left.descriptor if left is not None else None,
+            right.descriptor if right is not None else None,
+        )
+        findings.append(VisualFinding(angle=angle, status=status, detail=detail))
+    return findings, digests
 
 
 @router.post("/{handoff_id}/activate", response_model=HandoffView)

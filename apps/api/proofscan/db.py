@@ -4,6 +4,7 @@ from functools import lru_cache
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -50,6 +51,10 @@ class Verification(Created, Base):
     label: Mapped[str] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(24))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    require_exterior: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    baseline_report_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("reports.id", name="fk_verification_baseline_report", use_alter=True)
+    )
 
 
 class Claim(Base):
@@ -85,6 +90,16 @@ class Scan(Created, Base):
 
     guest_id: Mapped[UUID] = mapped_column(ForeignKey("guest_sessions.id"), unique=True)
     platform: Mapped[str] = mapped_column(String(20))
+
+
+class CaptureLink(Base):
+    __tablename__ = "scan_capture_links"
+
+    scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("scan_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class Challenge(Created, Base):
@@ -136,6 +151,7 @@ class Evidence(Created, Base):
     brightness: Mapped[int]
     sharpness: Mapped[int]
     jpeg: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    descriptor: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), deferred=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 

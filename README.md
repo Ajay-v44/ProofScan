@@ -1,6 +1,6 @@
 # ProofScan
 
-ProofScan helps buyers verify claims about a used device. A buyer creates a private seller link. The seller consents, collects supported hardware readings, optionally adds exterior photos, then reviews and decides whether to share a signed report. Buyers and operators can verify a shared report’s signature by ID.
+ProofScan helps buyers verify claims about a used device. A buyer creates a private seller link. For a new real-device check, the seller consents, collects supported hardware readings and photographs the front and back. The seller reviews the evidence and decides whether to share a signed report. The buyer can compare shared reports in Buyer chat and run a fresh check at pickup.
 
 ProofScan also records asset handoffs. Owners capture a baseline, can request receiver acknowledgment, and record the return to generate a signed comparison. Generic items use notes and photos. Windows handoffs can additionally compare hardware readings.
 
@@ -249,7 +249,7 @@ Tap **Scan device**, paste the original seller link, and follow consent, optiona
 | Hosted PostgreSQL | Set `DATABASE_URL` for an isolated, compatible database or schema with the appropriate PostgreSQL role. Apply migrations before switching the API and worker to that database. Authentication and database hosting can be configured independently. |
 | Moonshot listing assistance | In the API environment, set `KIMI_API_KEY`, an HTTPS `KIMI_BASE_URL`, and a `KIMI_MODEL` that supports JSON responses. Restart the API and use the listing suggestion action from an authenticated account. The manual claims flow works without this integration. `KIMI_VISION_MODEL` is reserved; image checks currently use local OpenCV. [Agent and model integration](docs/architecture/agent.md) |
 | Comparable pricing | Set `PRICING_COMPARABLES_FILE` to a JSON file available to the API process. Each saved sale needs `device`, `currency`, `amount`, `sold_on`, and a unique `reference`. Matching pricing requires at least three recent, distinct sales in one currency. For a container deployment, mount the file and use its container path. [Comparable pricing format](docs/development/setup.md#comparable-pricing) |
-| Device advisor and guided scan | Save devices in your private catalog and compare them from `/advisor`. The Expo scanner supports approval-gated collection and fixed alternate readers. The agent guide covers Moonshot, pgvector, local embeddings, Langfuse, and model probes. [Agent setup and architecture](docs/architecture/agent.md) |
+| Buyer chat and guided scan | Open `/advisor` to ask about your shared reports or include saved listings. The Expo scanner supports approval-gated collection and fixed alternate readers. The operator dashboard shows aggregate usage. [Agent setup and architecture](docs/architecture/agent.md) |
 
 Processed exterior photos currently live in PostgreSQL. See [implementation status](docs/status.md) for hosted object storage, mobile attestation, and other integrations awaiting implementation or live verification.
 
@@ -258,9 +258,12 @@ Processed exterior photos currently live in PostgreSQL. See [implementation stat
 ### Purchase verification
 
 1. At [localhost:3000](http://localhost:3000), create a buyer account and sign in. Create a verification with a device name and one or more listing claims.
-2. Open the generated seller link in a separate browser profile or private window. Give consent and complete either the enabled simulator flow or a supported device scan.
+2. Open the generated seller link in a separate browser profile or private window. Give consent and complete the enabled simulator flow or collect supported device readings and clear front and back photos.
 3. Review the collected information and select **Share signed report**. Return to the buyer workspace and open the completed verification’s report.
 4. Use the public **Verify** page at `/verify` and enter the report ID. Test a separate seller request with the decline option to verify that the buyer cannot open a private report.
+5. Open **Buyer chat** to ask about your shared devices. At pickup, select **Create pickup recheck link** on the original report to compare fresh readings and photos of the device in hand.
+
+When checking a phone in the Expo scanner, use **Share camera link** to take its front and back photos on another device. Select **Refresh photos** on the original scanner to continue.
 
 ### Asset handoff
 
@@ -269,6 +272,8 @@ Processed exterior photos currently live in PostgreSQL. See [implementation stat
 3. Record the return and open the signed comparison report. For photo comparisons, capture the same angle at baseline and return.
 
 See [demo scenarios and platform coverage](docs/ux/flows.md) for matching and mismatched claims, supported device readings, and additional workflows.
+
+See the [release review](docs/release-readiness.md) for the platform decisions and public launch gates.
 
 ## Tests and builds
 

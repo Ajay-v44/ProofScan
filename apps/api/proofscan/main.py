@@ -1,8 +1,11 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import lru_cache
+from pathlib import Path
 from uuid import uuid4
 
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -17,7 +20,7 @@ from .capabilities import CAPABILITIES, Capability
 from .config import settings
 from .db import database
 from .domain import InvalidTransition
-from .evidence import buyer_photos
+from .evidence import buyer_photos, capture
 from .evidence import router as evidence_router
 from .handoff import router as handoffs
 from .pricing import pricing_provider
@@ -29,14 +32,20 @@ from .suggestions import router as suggestions
 from .verification import guest_router, owner_router
 
 
+@lru_cache(maxsize=1)
+def migration_heads() -> frozenset[str]:
+    return frozenset(
+        ScriptDirectory(str(Path(__file__).resolve().parents[1] / "migrations")).get_heads()
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings()
     signer()
     pricing_provider()
+    migration_heads()
     try:
-        async with database().connect() as connection:
-            await connection.execute(text("SELECT 1 FROM verification_requests LIMIT 1"))
         yield
     finally:
         await database().dispose()
@@ -68,10 +77,14 @@ async def invalid_transition(_: Request, exc: InvalidTransition) -> JSONResponse
 @app.get("/health")
 async def health() -> dict[str, str]:
     try:
-        async with database().connect() as connection:
-            await connection.execute(text("SELECT 1"))
-    except (SQLAlchemyError, OSError) as exc:
-        raise HTTPException(503, "Database is temporarily unavailable.") from exc
+        async with asyncio.timeout(3), database().connect() as connection:
+            versions = frozenset(
+                await connection.scalars(text("SELECT version_num FROM alembic_version"))
+            )
+    except (SQLAlchemyError, TimeoutError, OSError) as exc:
+        raise HTTPException(503, "Database readiness check failed.") from exc
+    if versions != migration_heads():
+        raise HTTPException(503, "Database schema does not match this release.")
     return {"status": "ok"}
 
 
@@ -92,6 +105,7 @@ for router in (
     reports,
     admin_router,
     evidence_router,
+    capture,
     buyer_photos,
     suggestions,
     handoffs,

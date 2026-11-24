@@ -84,8 +84,11 @@ jobs:
       - run: npx --yes expo-doctor@1.21.8
         working-directory: apps/mobile
       - run: npm run export -w @proofscan/mobile -- --platform all --max-workers 3
-  windows-desktop:
-    runs-on: windows-latest
+  desktop:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

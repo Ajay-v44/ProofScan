@@ -61,6 +61,18 @@ class Acceptance(Created, Base):
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class CheckpointPhoto(Created, Base):
+    __tablename__ = "handoff_checkpoint_photos"
+    __table_args__ = (UniqueConstraint("checkpoint_id", "angle"),)
+
+    checkpoint_id: Mapped[UUID] = mapped_column(ForeignKey("handoff_checkpoints.id"))
+    angle: Mapped[str] = mapped_column(String(8))
+    digest: Mapped[str] = mapped_column(String(64))
+    jpeg: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    descriptor: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), deferred=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class Comparison(Created, Base):
     __tablename__ = "comparison_results"
 

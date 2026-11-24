@@ -84,13 +84,13 @@ def photo_view(item: Evidence) -> PhotoView:
 
 
 async def photos_for_scan(db: AsyncSession, scan_id: UUID) -> list[PhotoView]:
-    rows = await db.scalars(
-        select(Evidence)
-        .join(ExternalScan)
-        .where(ExternalScan.scan_id == scan_id)
+    rows = await db.execute(
+        select(Evidence.id, Evidence.angle, Evidence.digest, Evidence.width, Evidence.height)
+        .join(ExternalScan, Evidence.external_scan_id == ExternalScan.id)
+        .where(ExternalScan.scan_id == scan_id, Evidence.expires_at > now())
         .order_by(Evidence.angle)
     )
-    return [photo_view(row) for row in rows]
+    return [PhotoView.model_validate(row) for row in rows.mappings()]
 
 
 def create_report(

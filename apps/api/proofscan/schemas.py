@@ -47,6 +47,8 @@ class VerificationView(BaseModel):
     status: str
     created_at: datetime
     expires_at: datetime
+    require_exterior: bool = False
+    is_pickup: bool = False
 
 
 class CreatedVerification(VerificationView):
@@ -67,6 +69,15 @@ class ScanTicket(BaseModel):
     challenge: str
     issued_at: datetime
     expires_at: datetime
+
+
+class CaptureLinkView(BaseModel):
+    url: str
+    expires_at: datetime
+
+
+class CaptureProgress(BaseModel):
+    views: list[Angle]
 
 
 class Drive(Input):
@@ -138,8 +149,23 @@ class PriceView(BaseModel):
     sample_size: int
 
 
+class VisualFinding(BaseModel):
+    angle: Angle
+    status: Literal["unavailable", "retake", "reused", "review", "no_clear_change"]
+    detail: str
+
+
+class PickupComparison(BaseModel):
+    baseline_report_id: UUID
+    baseline_verification_id: UUID
+    baseline_captured_at: datetime
+    changed_hardware: list[str] = Field(default_factory=list)
+    compared_hardware: list[str] = Field(default_factory=list)
+    visuals: list[VisualFinding] = Field(default_factory=list)
+
+
 class ReportPayload(BaseModel):
-    schema_version: Literal[1, 2] = 1
+    schema_version: Literal[1, 2, 3] = 1
     report_id: UUID
     verification_id: UUID
     captured_at: datetime
@@ -154,6 +180,7 @@ class ReportPayload(BaseModel):
     inspection_requests: list[TestRequest] = Field(default_factory=list)
     functional: list[FunctionalReading] = Field(default_factory=list)
     price_estimate: PriceView | None = None
+    pickup: PickupComparison | None = None
 
 
 class SignedReport(BaseModel):
@@ -162,6 +189,7 @@ class SignedReport(BaseModel):
     signature: str
     key_id: str
     valid: bool
+    baseline_valid: bool | None = None
 
 
 class VerificationResult(BaseModel):
