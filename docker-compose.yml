@@ -21,6 +21,7 @@ x-api-environment: &api-environment
   KIMI_VISION_MODEL: ${KIMI_VISION_MODEL:-}
   AGENT_MODEL: ${AGENT_MODEL:-kimi-k3}
   AGENT_TEST_MODEL: ${AGENT_TEST_MODEL:-kimi-k2.6}
+  AGENT_REVIEW_MODEL: ${AGENT_REVIEW_MODEL:-kimi-k2.6}
   AGENT_VECTOR_ENABLED: ${AGENT_VECTOR_ENABLED:-false}
   AGENT_EMBEDDING_CACHE: /srv/proofscan/.agent-cache
   LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}

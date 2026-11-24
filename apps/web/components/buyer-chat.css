@@ -1,0 +1,234 @@
+.buyer-chat {
+  display: grid;
+  grid-template-rows: auto minmax(0,1fr) auto;
+  width: min(100%,1000px);
+  height: clamp(520px, calc(100dvh - 204px), 900px);
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--ps-cover);
+  background: var(--ps-surface);
+}
+
+.buyer-chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  padding: 8px clamp(10px,2vw,20px);
+  border-bottom: 1px solid var(--line);
+}
+
+.buyer-chat-header .actions {
+  gap: 2px;
+}
+
+.buyer-chat-header .button {
+  padding-inline: 9px;
+}
+
+.buyer-chat-log {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior-y: contain;
+  padding: clamp(12px,4vw,32px);
+  scroll-padding-block: 14px;
+}
+
+.buyer-chat-empty {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+}
+
+.buyer-chat-empty p {
+  max-width: 43ch;
+  color: var(--muted);
+}
+
+.buyer-chat-turn {
+  display: grid;
+  justify-items: start;
+  gap: 20px;
+  max-width: 740px;
+  margin: 0 auto 24px;
+}
+
+.buyer-chat-question {
+  display: grid;
+  justify-self: end;
+  gap: 4px;
+  max-width: min(87%,560px);
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 13px 13px 3px 13px;
+  background: var(--ps-brand-tint);
+  white-space: pre-wrap;
+}
+
+.buyer-chat-question > span,.buyer-chat-reply > span {
+  color: var(--muted);
+  font-size: .8rem;
+  font-weight: 810;
+}
+
+.buyer-chat-reply {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+
+.buyer-chat-answer {
+  display: grid;
+  gap: 10px;
+}
+
+.buyer-chat-citations {
+  display: grid;
+  gap: 7px;
+  margin-top: 3px;
+}
+
+.buyer-chat-citations h3 {
+  font-size: .875rem;
+}
+
+.buyer-chat-citations ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.buyer-chat-citations li {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--ps-control);
+  background: var(--canvas);
+  font-size: .875rem;
+}
+
+.buyer-chat-citations li p,.buyer-chat-time,.buyer-chat-progress {
+  color: var(--muted);
+  font-size: .875rem;
+}
+
+.buyer-chat-citations li a {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  width: fit-content;
+}
+
+.buyer-chat-progress,.buyer-chat-failure {
+  display: grid;
+  gap: 7px;
+  margin: 0 auto;
+  max-width: 740px;
+}
+
+.buyer-chat-compose {
+  display: grid;
+  gap: 5px;
+  padding: 10px clamp(10px,2vw,22px) 12px;
+  border-top: 1px solid var(--line);
+}
+
+.buyer-chat-input {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  width: min(100%,760px);
+  margin: 0 auto;
+  padding: 4px;
+  min-width: 0;
+  border: 1px solid var(--ps-border);
+  border-radius: 12px;
+}
+
+.buyer-chat-input:focus-within {
+  border-color: var(--ps-focus);
+  box-shadow: 0 0 0 1px var(--ps-focus);
+}
+
+.buyer-chat-input textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 52px;
+  max-height: 150px;
+  resize: none;
+  border: 0;
+  padding: 8px;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.buyer-chat-input .button {
+  flex: 0 0 44px;
+  width: 44px;
+  padding: 0;
+}
+
+.buyer-chat-compose > p {
+  text-align: center;
+  color: var(--muted);
+  font-size: .8rem;
+}
+
+.buyer-chat-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (max-width:520px) {
+  .buyer-chat {
+    height: clamp(455px,calc(100dvh - 170px),680px);
+  }
+  .buyer-chat-header .button {
+    padding-inline: 7px;
+    font-size: .8rem;
+  }
+  .buyer-chat-header .button svg {
+    width: 14px;
+  }
+  .buyer-chat-question {
+    max-width: 93%;
+  }
+}
+@media (max-height:480px) {
+  .buyer-chat {
+    height: 400px;
+  }
+}
+.buyer-chat-source-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.75rem;
+}
+
+.buyer-chat-source-links button {
+  padding-inline: 0.5rem;
+}
+
+.buyer-chat-source-links input {
+  flex: 0 1 100%;
+  min-width: 0;
+}
