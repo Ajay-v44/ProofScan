@@ -94,6 +94,7 @@ dist/
 target/
 *.tsbuildinfo
 .expo/
+.agent-cache/
 /apps/mobile/android/
 /apps/mobile/ios/
 *.aab

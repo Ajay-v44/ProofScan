@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 test("workspace search opens an example report and keeps its data separate", async ({ page }) => {
@@ -36,4 +37,41 @@ test("workspace is usable at phone width and preserves the handoff entry", async
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   const auth = page.getByRole("dialog", { name: "Sign in" });
   await expect(auth.getByLabel("Email")).toBeFocused();
+});
+
+test("the workspace can load older verifications from PostgreSQL", async ({ page }) => {
+  const account = await page.request.post("/api/v1/auth/register", {
+    data: { email: "paging-" + randomUUID() + "@example.test", password: "Fixture-" + randomUUID() },
+  });
+  expect(account.ok()).toBeTruthy();
+  for (let index = 0; index < 31; index++) {
+    const response = await page.request.post("/api/v1/verifications", {
+      data: { label: "Fixture verification " + index, claims: {} },
+    });
+    expect(response.ok()).toBeTruthy();
+  }
+  await page.goto("/");
+  const oldest = page.getByText("Fixture verification 0", { exact: true });
+  await expect(page.locator(".verification-item")).toHaveCount(30);
+  await expect(oldest).toHaveCount(0);
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(oldest).toBeVisible();
+  await expect(page.locator(".verification-item")).toHaveCount(31);
+});
+
+test("device advisor saves a private catalog item and cites it", async ({ page }) => {
+  const account = await page.request.post("/api/v1/auth/register", {
+    data: { email: "advisor-" + randomUUID() + "@example.test", password: "Fixture-" + randomUUID() },
+  });
+  expect(account.ok()).toBeTruthy();
+  await page.goto("/advisor");
+  await page.getByLabel("Device name").fill("Battery test phone");
+  await page.getByLabel("Specifications or listing notes").fill("Documented battery life and clear outdoor display.");
+  await page.getByRole("button", { name: "Add device" }).click();
+  await expect(page.getByRole("button", { name: "Remove Battery test phone" })).toBeVisible();
+  await page.getByLabel("What are you looking for?").fill("Which phone has good battery life?");
+  await page.getByRole("button", { name: "Get a recommendation" }).click();
+  await expect(page.getByRole("heading", { name: "Recommendation" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sources from your catalog" })).toBeVisible();
+  await expect(page.getByText("Battery test phone", { exact: true })).toHaveCount(2);
 });

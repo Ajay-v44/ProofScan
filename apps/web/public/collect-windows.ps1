@@ -68,6 +68,13 @@ if ($cpu.Count -eq 0 -and $null -eq $capacity -and $drives.Count -eq 0) {
 }
 $manufacturer = if ($machine) { Clean-Label $machine.Manufacturer } else { $null }
 $model = if ($machine) { Clean-Label $machine.Model } else { $null }
+if (-not $manufacturer -or -not $model) {
+    $product = Read-Metric Win32_ComputerSystemProduct @('Vendor','Name') | Select-Object -First 1
+    if ($product) {
+        if (-not $manufacturer) { $manufacturer = Clean-Label $product.Vendor }
+        if (-not $model) { $model = Clean-Label $product.Name }
+    }
+}
 $payload = [ordered]@{
     scan_id = $scanId.ToString()
     challenge = $ticket.challenge

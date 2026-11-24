@@ -13,9 +13,10 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .config import settings
@@ -43,7 +44,7 @@ class User(Created, Base):
 
 class Verification(Created, Base):
     __tablename__ = "verification_requests"
-    __table_args__ = (Index("ix_verification_owner_created", "owner_id", "created_at"),)
+    __table_args__ = (Index("ix_verification_owner_created", "owner_id", "created_at", "id"),)
 
     owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
     label: Mapped[str] = mapped_column(String(120))
@@ -120,7 +121,12 @@ class FunctionalResult(Created, Base):
 
 class Evidence(Created, Base):
     __tablename__ = "evidence_items"
-    __table_args__ = (UniqueConstraint("external_scan_id", "angle"),)
+    __table_args__ = (
+        UniqueConstraint("external_scan_id", "angle"),
+        Index(
+            "ix_evidence_pending_purge", "expires_at", "id", postgresql_where=text("jpeg IS NOT NULL")
+        ),
+    )
 
     external_scan_id: Mapped[UUID] = mapped_column(ForeignKey("external_scan_sessions.id"))
     angle: Mapped[str] = mapped_column(String(8))
@@ -197,7 +203,7 @@ class Invalidation(Base):
 class Notification(Created, Base):
     __tablename__ = "notifications"
     __table_args__ = (
-        Index("ix_notifications_owner_created", "owner_id", "created_at"),
+        Index("ix_notifications_owner_created", "owner_id", "created_at", "id"),
         CheckConstraint(
             "(verification_id IS NOT NULL) <> (handoff_id IS NOT NULL)", name="ck_notification_target"
         ),
@@ -221,11 +227,26 @@ class Audit(Created, Base):
 
 
 @lru_cache
-def database():
-    return create_async_engine(settings().database_url, pool_pre_ping=True, hide_parameters=True)
+def database() -> AsyncEngine:
+    config = settings()
+    return create_async_engine(
+        config.database_url,
+        pool_pre_ping=True,
+        pool_size=config.database_pool_size,
+        max_overflow=config.database_max_overflow,
+        pool_timeout=5,
+        connect_args={"timeout": 5, "command_timeout": 30},
+        hide_parameters=True,
+    )
+
+
+@lru_cache
+def session_factory() -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(database(), expire_on_commit=False)
 
 
 async def session() -> AsyncIterator[AsyncSession]:
-    factory = async_sessionmaker(database(), expire_on_commit=False)
-    async with factory() as db, db.begin():
+    factory = session_factory()
+    async with factory() as db:
         yield db
+        await db.commit()

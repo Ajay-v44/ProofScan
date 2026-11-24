@@ -118,6 +118,9 @@ a, button { -webkit-tap-highlight-color: transparent; }
 .records-list > li { display: flex; flex-wrap: wrap; align-items: center; gap: 11px; padding: 15px; background: var(--ps-surface); border-bottom: 1px solid var(--line); }
 .records-list > li:last-child { border-bottom: 0; }
 .records-list > li strong { flex: 1; min-width: 110px; }
+.advisor-price { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.advisor-sources > li { display: grid; justify-items: start; overflow-wrap: anywhere; }
+.advisor-sources > li p { margin: 0; }
 
 .dialog { position: fixed; inset: 0; z-index: 20; width: min(calc(100vw - 28px), 560px); max-height: min(90dvh, 730px); margin: auto; padding: 0; overflow: auto; border: 1px solid var(--line); border-radius: var(--ps-cover); background: var(--ps-surface); color: var(--ink); box-shadow: 0 22px 76px #21173830; }
 .dialog::backdrop { background: #21173860; }

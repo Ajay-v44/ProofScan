@@ -1,4 +1,3 @@
-import asyncio
 from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
@@ -13,7 +12,7 @@ from .domain import Status
 from .schemas import Angle, PhotoView, Ticket
 from .services import photo_view, token_hash, validate_challenge
 from .verification import GuestSession
-from .visual import process_photo
+from .visual import photo_work, process_photo
 
 router = APIRouter(prefix="/guest/{verification_id}", tags=["scan photos"])
 buyer_photos = APIRouter(tags=["scan photos"])
@@ -46,7 +45,7 @@ async def add_photo(
     record = await db.scalar(select(Challenge).where(Challenge.token_hash == token_hash(challenge)))
     try:
         validate_challenge(record, scan, guest, scan.platform)
-        photo = await asyncio.to_thread(process_photo, await request.body())
+        photo = await photo_work.run(process_photo, await request.body())
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 

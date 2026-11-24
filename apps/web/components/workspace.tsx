@@ -4,12 +4,13 @@ import { api, ApiError, type Notification, type Report, type Verification } from
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bell, ChevronRight, ClipboardCheck, FileCheck2, FolderOpen, Grid2X2, Laptop, LayoutGrid,
-  Link2, List, LogOut, PackageCheck, Plus, RefreshCw, ScanLine, Search, ShieldCheck, UserRound,
+  Link2, List, LogOut, PackageCheck, Plus, RefreshCw, ScanLine, Search, ShieldCheck, Sparkles, UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ReportDetails } from "./report";
+import { LoadMore, useOwnerCollection } from "./owner-collection";
 import { Brand, ErrorNote, Status } from "./shared";
 import { Button, buttonVariants } from "./ui/button";
 import { Dialog } from "./ui/dialog";
@@ -175,6 +176,7 @@ function SearchWorkspace({ rows, onExample, onRecord, onCreate, onSeller }: {
   const links = [
     { name: "Handoffs", icon: PackageCheck, href: "/handoffs" },
     { name: "Check a report", icon: ShieldCheck, href: "/verify" },
+    { name: "Device advisor", icon: Sparkles, href: "/advisor" },
   ].filter(item => item.name.toLowerCase().includes(value));
   const real = rows.filter(item => (item.label + " " + item.id).toLowerCase().includes(value)).slice(0, 8);
   const samples = examples.filter(item => item.label.toLowerCase().includes(value));
@@ -212,14 +214,14 @@ export function Workspace() {
   const [afterSignIn, setAfterSignIn] = useState(false);
   const session = useQuery({ queryKey: ["session"], queryFn: () => api<Session>("/auth/session") });
   const user = session.data;
-  const rows = useQuery({ queryKey: ["verifications", user?.user_id], enabled: !!user,
-    queryFn: () => api<Verification[]>("/verifications"), refetchInterval: 7500 });
-  const activity = useQuery({ queryKey: ["activity", user?.user_id], enabled: !!user && section === "Activity",
-    queryFn: () => api<Notification[]>("/notifications"), refetchInterval: 7500 });
+  const rows = useOwnerCollection<Verification>("/verifications", "verifications", user?.user_id, { pollInterval: 7500 });
+  const activity = useOwnerCollection<Notification>("/notifications", "activity", user?.user_id, {
+    enabled: section === "Activity", pollInterval: 7500,
+  });
   const logout = useMutation({ mutationFn: () => api("/auth/logout", {}),
     onSuccess: () => { client.clear(); window.location.reload(); } });
   const sessionError = session.error instanceof ApiError && session.error.status === 401 ? null : session.error;
-  const current = rows.data?.find(row => row.id === selected);
+  const current = rows.items.find(row => row.id === selected);
   const authOpen = overlay === "sign-in" || overlay === "register";
 
   useEffect(() => {
@@ -252,6 +254,7 @@ export function Workspace() {
         {sections.map(({ id, icon: Icon }) => <button type="button" className="nav-link" key={id}
           aria-current={section === id ? "page" : undefined} onClick={() => setSection(id)}><Icon size={19} aria-hidden />{id}</button>)}
         <Link className="nav-link" href="/handoffs"><PackageCheck size={19} aria-hidden />Handoffs</Link>
+        <Link className="nav-link" href="/advisor"><Sparkles size={19} aria-hidden />Device advisor</Link>
         <Link className="nav-link" href="/verify"><ShieldCheck size={19} aria-hidden />Check a report</Link>
         <button type="button" className="nav-link" aria-current={section === "Activity" ? "page" : undefined} onClick={() => setSection("Activity")}><Bell size={19} aria-hidden />Activity</button>
         {user?.admin && <Link className="nav-link" href="/admin"><FileCheck2 size={19} aria-hidden />Operator</Link>}
@@ -297,19 +300,25 @@ export function Workspace() {
               <span className="task-link">Create a handoff<ChevronRight size={17} aria-hidden /></span></span>
           </Link>
         </div>}
-        {section !== "Activity" ? <Records key={String(!!user)} rows={rows.data ?? []} showExamples={!user}
-          pending={!!user && rows.isPending} onExample={viewExample} onRecord={viewRecord}
-          onRefresh={() => void rows.refetch()} onCreate={create} />
+        {section !== "Activity" ? <>
+          <Records key={String(!!user)} rows={rows.items} showExamples={!user}
+            pending={!!user && rows.isPending} onExample={viewExample} onRecord={viewRecord}
+            onRefresh={() => void rows.refetch()} onCreate={create} />
+          {rows.hasNextPage && <LoadMore onClick={() => void rows.fetchNextPage()}
+            busy={rows.isFetching} loading={rows.isFetchingNextPage} />}
+        </>
           : <section className="library" aria-label="Request activity">
             {!user ? <div className="empty library-empty"><span className="icon-tile"><Bell size={22} aria-hidden /></span>
               <strong>Sign in to see your activity</strong><Button variant="outline" onClick={() => setOverlay("sign-in")}>Sign in to view activity</Button></div>
               : activity.isPending ? <p className="empty" role="status">Loading activity…</p>
-                : !activity.data?.length ? <p className="empty">No activity yet.</p>
-                  : <ul className="records-list">{activity.data.map(item => <li key={item.id}>
+                : !activity.items.length ? <p className="empty">No activity yet.</p>
+                  : <ul className="records-list">{activity.items.map(item => <li key={item.id}>
                     <Bell size={17} aria-hidden /><strong>{events[item.event] ?? item.event}</strong>
                     <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time>
                     {item.handoff_id && <Link className="quiet-link" href={"/handoffs/" + item.handoff_id}>Open comparison</Link>}
                   </li>)}</ul>}
+            {activity.hasNextPage && <LoadMore onClick={() => void activity.fetchNextPage()}
+              busy={activity.isFetching} loading={activity.isFetchingNextPage} />}
           </section>}
       </main>
     </div>
@@ -333,7 +342,7 @@ export function Workspace() {
       </div>
     </Dialog>}
     {overlay === "search" && <Dialog title="Search workspace" onClose={close}>
-      <SearchWorkspace rows={rows.data ?? []} onCreate={create} onExample={viewExample} onRecord={viewRecord} onSeller={() => setOverlay("seller")} />
+      <SearchWorkspace rows={rows.items} onCreate={create} onExample={viewExample} onRecord={viewRecord} onSeller={() => setOverlay("seller")} />
     </Dialog>}
     {sample && <Dialog title={sample.label} placement="side" onClose={() => setSample(null)}><div className="detail-body">
       <ReportDetails report={sample.report} photoPath="" /></div></Dialog>}

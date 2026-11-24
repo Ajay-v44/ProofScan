@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,7 +18,7 @@ class Asset(Created, Base):
 
 class Handoff(Created, Base):
     __tablename__ = "handoffs"
-    __table_args__ = (Index("ix_handoff_owner_created", "owner_id", "created_at"),)
+    __table_args__ = (Index("ix_handoff_owner_created", "owner_id", "created_at", "id"),)
 
     owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
     asset_id: Mapped[UUID] = mapped_column(ForeignKey("assets.id"), unique=True)
@@ -28,7 +28,15 @@ class Handoff(Created, Base):
 
 class Checkpoint(Created, Base):
     __tablename__ = "handoff_checkpoints"
-    __table_args__ = (UniqueConstraint("handoff_id", "phase"),)
+    __table_args__ = (
+        UniqueConstraint("handoff_id", "phase"),
+        Index(
+            "ix_checkpoint_pending_purge",
+            "photo_expires_at",
+            "id",
+            postgresql_where=text("jpeg IS NOT NULL"),
+        ),
+    )
 
     handoff_id: Mapped[UUID] = mapped_column(ForeignKey("handoffs.id"))
     phase: Mapped[str] = mapped_column(String(12))

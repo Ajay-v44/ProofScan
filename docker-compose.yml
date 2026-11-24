@@ -1,6 +1,8 @@
 name: proofscan
 x-api-environment: &api-environment
   DATABASE_URL: ${COMPOSE_DATABASE_URL:?Set COMPOSE_DATABASE_URL using the db service hostname}
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-5}
+  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-5}
   REDIS_URL: redis://redis:6379/0
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
   AUTH_MODE: ${AUTH_MODE:-local}
@@ -17,10 +19,17 @@ x-api-environment: &api-environment
   KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.ai/v1}
   KIMI_MODEL: ${KIMI_MODEL:-}
   KIMI_VISION_MODEL: ${KIMI_VISION_MODEL:-}
+  AGENT_MODEL: ${AGENT_MODEL:-kimi-k3}
+  AGENT_TEST_MODEL: ${AGENT_TEST_MODEL:-kimi-k2.6}
+  AGENT_VECTOR_ENABLED: ${AGENT_VECTOR_ENABLED:-false}
+  AGENT_EMBEDDING_CACHE: /srv/proofscan/.agent-cache
+  LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
   PRICING_COMPARABLES_FILE: ${PRICING_COMPARABLES_FILE:-}
 services:
   db:
-    image: postgres:17-alpine
+    image: ${PROOFSCAN_POSTGRES_IMAGE:-postgres:17-alpine}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
@@ -44,6 +53,8 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/api.Dockerfile
+      args:
+        PROOFSCAN_INSTALL_AGENT: ${PROOFSCAN_INSTALL_AGENT:-false}
     command: ["alembic", "upgrade", "head"]
     environment: *api-environment
     depends_on:
@@ -52,6 +63,8 @@ services:
   api:
     image: proofscan-api:local
     environment: *api-environment
+    volumes:
+      - agent-model-cache:/srv/proofscan/.agent-cache
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -90,3 +103,4 @@ services:
         condition: service_healthy
 volumes:
   postgres-data:
+  agent-model-cache:

@@ -26,7 +26,7 @@
 
 ## Not implemented
 
-- A production Supabase Storage adapter, signed object URLs, push delivery, Sentry or Langfuse integration, and end-to-end OpenTelemetry export.
+- A production Supabase Storage adapter, signed object URLs, push delivery, Sentry integration, and general application OpenTelemetry export.
 - Play Integrity and App Attest provider code and associated device trust signals.
 - Live market lookup. A labeled simulator pricing fixture and an optional local sold-comparables file are supported.
 - Comprehensive native diagnostics, component identity/health, signing and distribution, and remote deployment.
@@ -49,3 +49,15 @@ The browser suite created test-only users and reports in the local database. Pos
 - Six Playwright tests passed, covering keyboard search, the report preview, phone navigation, verification filters, the real Windows purchase flow and handoffs.
 - The Next.js production build, desktop frontend bundle, Android and iOS JavaScript exports, workspace TypeScript checks and web lint passed.
 - The Windows Tauri configuration and source passed `cargo check --locked`. The native Windows development app built, launched, and its WebView connected to the local workspace. Physical-device validation on macOS, Android and iOS is still pending.
+
+## Production hardening
+
+- Requests are bounded by bytes received and time, with correlation IDs on rejected requests. PostgreSQL pools are configurable per process. The worker clears evidence and expires requests in bounded batches.
+- Handoff lists use one query for the page. Owner lists have cursor pagination. Scan ticket renewal on the same platform preserves evidence while retiring old challenges.
+- PostgreSQL integration tests and Playwright verified consent, sharing, signed reports, handoffs, cursor pagination and the Windows collector. Migrations were tested on a disposable database.
+
+## Device advisor and guided scan
+
+- The private catalog supports text retrieval and optional pgvector semantic ranking. The advisor uses a bounded LangGraph tool loop and requires model permission per question.
+- Guided collection selects among fixed read-only Expo readers after seller approval. Invalid or unavailable model decisions use the local policy. Physical Android and iOS acceptance is still pending.
+- Optional Langfuse instrumentation exports agent metadata. Live export needs the target project’s credentials. [Agent setup and architecture](architecture/agent.md)

@@ -1,4 +1,3 @@
-import asyncio
 import hmac
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -7,17 +6,18 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, StringConstraints
-from sqlalchemy import select
+from sqlalchemy import Select, exists, func, select
 
 from .auth import DB, Owner
 from .config import settings
 from .db import Notification, now
 from .domain import InvalidTransition
 from .handoff_models import Acceptance, Asset, Checkpoint, Comparison, ComparisonInvalidation, Handoff
+from .pagination import PAGE_SIZE, before_record
 from .schemas import GuestExchange, Hardware, Input, Label, ScanTicket, Submission
 from .services import fixture_hardware, new_token, signer, token_hash
 from .signing import Signature
-from .visual import process_photo
+from .visual import photo_work, process_photo
 
 router = APIRouter(prefix="/handoffs", tags=["handoffs"])
 Mode = Literal["windows", "visual", "simulator"]
@@ -35,7 +35,15 @@ class State(StrEnum):
     CLOSED = "CLOSED"
 
 
-NEXT = {current: target for current, target in zip(list(State)[:-1], list(State)[1:], strict=True)}
+NEXT = {
+    State.DRAFT: State.BASELINE_SCANNING,
+    State.BASELINE_SCANNING: State.BASELINE_CREATED,
+    State.BASELINE_CREATED: State.ACTIVE_HANDOFF,
+    State.ACTIVE_HANDOFF: State.RETURN_SCANNING,
+    State.RETURN_SCANNING: State.COMPARING,
+    State.COMPARING: State.REPORT_READY,
+    State.REPORT_READY: State.CLOSED,
+}
 
 
 def move(item: Handoff, target: State) -> None:
@@ -74,41 +82,52 @@ async def load(handoff_id: UUID, owner: UUID, db: DB, *, lock: bool = False) -> 
     return item
 
 
-async def describe(item: Handoff, db: DB) -> HandoffView:
-    asset = await db.get(Asset, item.asset_id)
-    assert asset is not None
-    accepted = await db.scalar(select(Acceptance.accepted_at).where(Acceptance.handoff_id == item.id))
-    linked = await db.scalar(select(Comparison.id).where(Comparison.handoff_id == item.id))
-    photos = await db.scalars(
-        select(Checkpoint.phase).where(
-            Checkpoint.handoff_id == item.id,
+def handoff_details() -> Select[tuple[Handoff, str, bool, UUID | None, list[str] | None]]:
+    accepted = exists().where(Acceptance.handoff_id == Handoff.id, Acceptance.accepted_at.is_not(None))
+    report = select(Comparison.id).where(Comparison.handoff_id == Handoff.id).scalar_subquery()
+    photos = (
+        select(func.array_agg(Checkpoint.phase))
+        .where(
+            Checkpoint.handoff_id == Handoff.id,
             Checkpoint.photo_digest.is_not(None),
             Checkpoint.photo_expires_at > now(),
         )
+        .scalar_subquery()
     )
+    return select(Handoff, Asset.label, accepted, report, photos).join(Asset)
+
+
+def handoff_view(
+    item: Handoff, label: str, accepted: bool, report_id: UUID | None, photos: list[str] | None
+) -> HandoffView:
     return HandoffView.model_validate(
         {
             "id": item.id,
             "asset_id": item.asset_id,
-            "label": asset.label,
+            "label": label,
             "mode": item.mode,
             "status": item.status,
-            "receiver_accepted": accepted is not None,
-            "report_id": linked,
-            "photos": list(photos),
+            "receiver_accepted": accepted,
+            "report_id": report_id,
+            "photos": sorted(photos or ()),
         }
     )
 
 
+async def describe(item: Handoff, db: DB) -> HandoffView:
+    details = (await db.execute(handoff_details().where(Handoff.id == item.id))).one()
+    return handoff_view(*details._tuple())
+
+
 @router.get("", response_model=list[HandoffView])
-async def list_handoffs(owner: Owner, db: DB) -> list[HandoffView]:
-    items = await db.scalars(
-        select(Handoff)
-        .where(Handoff.owner_id == owner)
-        .order_by(Handoff.created_at.desc(), Handoff.id)
-        .limit(30)
+async def list_handoffs(owner: Owner, db: DB, before: UUID | None = None) -> list[HandoffView]:
+    page = handoff_details().where(Handoff.owner_id == owner)
+    if before is not None:
+        page = page.where(before_record(Handoff, owner, before))
+    items = await db.execute(
+        page.order_by(Handoff.created_at.desc(), Handoff.id.desc()).limit(PAGE_SIZE)
     )
-    return [await describe(item, db) for item in items]
+    return [handoff_view(*item._tuple()) for item in items]
 
 
 @router.post("", response_model=HandoffView, status_code=201)
@@ -183,7 +202,7 @@ async def save_checkpoint_photo(handoff_id: UUID, request: Request, owner: Owner
         raise HTTPException(422, "The simulator uses its own visual condition.")
     checkpoint = await current_checkpoint(item, db)
     try:
-        photo = await asyncio.to_thread(process_photo, await request.body())
+        photo = await photo_work.run(process_photo, await request.body())
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     checkpoint.jpeg = photo.jpeg

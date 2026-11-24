@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: proofscan
           POSTGRES_PASSWORD: test-only
@@ -22,6 +22,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://proofscan:test-only@127.0.0.1:5432/proofscan_test
       TEST_DATABASE_URL: postgresql+asyncpg://proofscan:test-only@127.0.0.1:5432/proofscan_test
+      TEST_AGENT_VECTOR: "1"
       WEB_ORIGIN: http://localhost:3000
       REPORT_KEY_ID: ci
       ENABLE_SIMULATOR: "true"
@@ -43,8 +44,11 @@ jobs:
           print("REPORT_PRIVATE_KEY=" + base64.urlsafe_b64encode(Ed25519PrivateKey.generate().private_bytes_raw()).decode().rstrip("="))
           PY
       - run: uv run --no-sync alembic upgrade head
+      - run: |
+          docker exec -i "${{ job.services.postgres.id }}" psql -v ON_ERROR_STOP=1 -U proofscan -d proofscan_test < infrastructure/postgres/enable_agent_vectors.sql
       - run: uv run --no-sync alembic check
       - run: uv run --no-sync ruff check apps/api apps/worker
+      - run: uv run --no-sync ruff format --check apps/api apps/worker
       - run: uv run --no-sync mypy apps/api/proofscan apps/worker
       - run: uv run --no-sync pytest -q
       - run: npm ci --no-audit

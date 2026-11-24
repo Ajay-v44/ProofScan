@@ -1,4 +1,4 @@
-import { api, ApiError, type Angle, type GuestView, type ScanTicket } from "@proofscan/api-client";
+import { api, ApiError, type Angle, type DevicePlan, type GuestView, type ScanTicket } from "@proofscan/api-client";
 import { colors, radii } from "@proofscan/design-tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Device from "expo-device";
@@ -9,6 +9,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Image, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { runDeviceTool, type MobileReadings } from "../src/device-tools";
 import { apiOrigin, useSession } from "../src/session";
 import { Action, Failure, Panel, Screen, StepRail, styles } from "../src/ui";
 
@@ -22,7 +23,7 @@ function clean(file: File | null) {
 }
 
 function sellerFetch(url: string, init: Parameters<typeof expoFetch>[1]) {
-  return expoFetch(url, { ...init, credentials: "omit", redirect: "error", signal: AbortSignal.timeout(30_000) });
+  return expoFetch(url, { ...init, credentials: "omit", redirect: "error", signal: init?.signal ?? AbortSignal.timeout(30_000) });
 }
 
 export default function Seller() {
@@ -36,6 +37,7 @@ export default function Seller() {
   const [angle, setAngle] = useState<Angle>("front");
   const [cameraSettingsNeeded, setCameraSettingsNeeded] = useState(false);
   const [cameraSettingsError, setCameraSettingsError] = useState<unknown>(null);
+  const [plan, setPlan] = useState<DevicePlan | null>(null);
   const platform = Platform.OS === "ios" ? "ios" : "android";
   const path = "/guest/" + session?.id;
   const key = ["mobile-seller", session?.id];
@@ -103,20 +105,52 @@ export default function Seller() {
     onSettled: () => client.invalidateQueries({ queryKey: key }),
   });
 
-  const submit = useMutation({
+  async function submitReadings(readings: MobileReadings) {
+    if (!readings.model && !readings.memory_gib) throw new Error("This device did not disclose supported hardware readings.");
+    const scan = await scanTicket();
+    return call<GuestView>("/submit", {
+      scan_id: scan.scan_id, challenge: scan.challenge, platform,
+      hardware: { ...readings, cpu: [], gpu: [], drives: [] },
+    });
+  }
+
+  const prepare = useMutation({
     mutationFn: async () => {
       if (!Device.isDevice) throw new Error("Open ProofScan on the device you are selling.");
-      const scan = await scanTicket();
-      const model = Device.modelName?.trim().slice(0, 120) || null;
-      const manufacturer = Device.manufacturer?.trim().slice(0, 120) || null;
-      const memory = Device.totalMemory ? Math.max(1, Math.round(Device.totalMemory / 2 ** 30)) : null;
-      if (!model && !memory) throw new Error("This device did not disclose supported hardware readings.");
-      return call<GuestView>("/submit", {
-        scan_id: scan.scan_id, challenge: scan.challenge, platform,
-        hardware: { manufacturer, model, memory_gib: memory, cpu: [], gpu: [], drives: [] },
+      await scanTicket();
+      return call<DevicePlan>("/agent/plan", { platform });
+    },
+    onSuccess: setPlan,
+  });
+  const skipPlan = useMutation({
+    mutationFn: (current: DevicePlan) => call<DevicePlan>("/agent/plan/" + current.id, {
+      revision: current.revision, action: "skip",
+    }),
+    onSuccess: () => setPlan(null),
+  });
+  const submit = useMutation({
+    mutationFn: async (approvedPlan: DevicePlan | null) => {
+      if (!Device.isDevice) throw new Error("Open ProofScan on the device you are selling.");
+      if (!approvedPlan) return submitReadings({
+        ...runDeviceTool("model_name").readings,
+        ...runDeviceTool("memory_total").readings,
       });
+      const planPath = "/agent/plan/" + approvedPlan.id;
+      let next = await call<DevicePlan>(planPath, { revision: approvedPlan.revision, action: "approve" });
+      const readings: MobileReadings = {};
+      for (let count = 0; count < 3 && next.status === "collecting"; count++) {
+        if (!next.next_tool) throw new Error("ProofScan did not receive the next device check.");
+        const result = runDeviceTool(next.next_tool);
+        Object.assign(readings, result.readings);
+        next = await call<DevicePlan>(planPath, {
+          revision: next.revision, action: "observe", tool: next.next_tool, outcome: result.outcome,
+        });
+      }
+      if (next.status !== "complete") throw new Error("The guided scan did not finish. Start a new plan or use basic collection.");
+      return submitReadings(readings);
     },
     onSuccess: save,
+    onSettled: () => setPlan(null),
     onError: () => { setTicket(null); void guest.refetch(); },
   });
   const decision = useMutation({
@@ -128,12 +162,13 @@ export default function Seller() {
   const step = status === "COMPLETED" || status === "DECLINED" ? 3 : status === "SELLER_REVIEW" ? 2
     : status === "CONSENTED" || status === "SCANNING" ? 1 : 0;
   const preview = guest.data?.preview;
-  const busy = consent.isPending || photo.isPending || submit.isPending || decision.isPending;
+  const busy = consent.isPending || photo.isPending || submit.isPending || decision.isPending ||
+    prepare.isPending || skipPlan.isPending;
   const collecting = status === "CONSENTED" || status === "SCANNING";
   const linkUnavailable = guest.error instanceof ApiError && guest.error.status === 404;
   const savedAngles = new Set(guest.data?.photos.map(item => item.angle));
   const stageError = status === "SELLER_OPENED" ? consent.error
-    : collecting ? submit.error ?? photo.error ?? cameraSettingsError
+    : collecting ? submit.error ?? prepare.error ?? skipPlan.error ?? photo.error ?? cameraSettingsError
       : status === "SELLER_REVIEW" ? decision.error : null;
 
   return <Screen>
@@ -181,9 +216,20 @@ export default function Seller() {
       <Panel>
         <Text accessibilityRole="header" style={styles.heading}>Device readings</Text>
         <Text style={styles.text}>ProofScan reads the model and memory when available.</Text>
-        <Action disabled={busy} onPress={() => { photo.reset(); submit.mutate(); }}>
-          {submit.isPending ? "Collecting…" : "Collect and preview"}
-        </Action>
+        {plan ? <>
+          <Text style={styles.text}>Approve local model and memory checks. If the model name is unavailable, ProofScan may try the operating system’s model code. The planner may send check names and outcomes to Moonshot. You review the actual readings before sharing.</Text>
+          <Action disabled={busy} onPress={() => { photo.reset(); submit.mutate(plan); }}>
+            {submit.isPending ? "Collecting…" : "Approve checks and collect"}
+          </Action>
+          <Action quiet disabled={busy} onPress={() => skipPlan.mutate(plan)}>Skip guided checks</Action>
+        </> : <>
+          <Action disabled={busy} onPress={() => { submit.reset(); prepare.mutate(); }}>
+            {prepare.isPending ? "Preparing checks…" : "Plan guided scan"}
+          </Action>
+          <Action quiet disabled={busy} onPress={() => { photo.reset(); prepare.reset(); skipPlan.reset(); submit.mutate(null); }}>
+            {submit.isPending ? "Collecting…" : "Use basic collection"}
+          </Action>
+        </>}
       </Panel>
     </>}
     {status === "SELLER_REVIEW" && preview && <Panel>

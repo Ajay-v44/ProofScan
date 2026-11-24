@@ -18,6 +18,20 @@ class ClaimsProvider(Protocol):
     async def suggest(self, listing: str) -> Suggestion: ...
 
 
+def token_count(value: object) -> int | None:
+    return (
+        value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 2**31 else None
+    )
+
+
+def model_controls(model: str) -> dict[str, object]:
+    if model.startswith("kimi-k3"):
+        return {"reasoning_effort": "low"}
+    if model == "kimi-k2.6":
+        return {"thinking": {"type": "disabled"}}
+    return {}
+
+
 class MoonshotProvider:
     def __init__(self, base_url: str, key: str, model: str):
         self.base_url = base_url.rstrip("/")
@@ -32,7 +46,7 @@ class MoonshotProvider:
                 json={
                     "model": self.model,
                     "response_format": {"type": "json_object"},
-                    "max_tokens": 256,
+                    "max_tokens": 700 if self.model.startswith("kimi-k3") else 256,
                     "messages": [
                         {
                             "role": "system",
@@ -45,13 +59,18 @@ class MoonshotProvider:
                         },
                         {"role": "user", "content": listing},
                     ],
+                    **model_controls(self.model),
                 },
             )
         result.raise_for_status()
         payload = result.json()
         claims = Claims.model_validate_json(payload["choices"][0]["message"]["content"])
-        usage = payload.get("usage") or {}
-        return Suggestion(claims, usage.get("prompt_tokens"), usage.get("completion_tokens"))
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return Suggestion(claims, None, None)
+        return Suggestion(
+            claims, token_count(usage.get("prompt_tokens")), token_count(usage.get("completion_tokens"))
+        )
 
 
 def model_provider() -> ClaimsProvider | None:

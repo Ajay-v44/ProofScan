@@ -28,6 +28,7 @@ from .db import (
 )
 from .domain import TRANSITIONS, Status
 from .inspection import inspect
+from .pagination import PAGE_SIZE, before_record
 from .pricing import pricing_provider
 from .schemas import (
     ConsentIn,
@@ -97,13 +98,15 @@ async def verifications(
     owner: Owner,
     db: DB,
     offset: Annotated[int, Query(ge=0)] = 0,
+    before: UUID | None = None,
 ) -> list[VerificationView]:
+    page = select(Verification).where(Verification.owner_id == owner)
+    if before is not None:
+        page = page.where(before_record(Verification, owner, before))
     rows = await db.scalars(
-        select(Verification)
-        .where(Verification.owner_id == owner)
-        .order_by(Verification.created_at.desc(), Verification.id)
+        page.order_by(Verification.created_at.desc(), Verification.id.desc())
         .offset(offset)
-        .limit(30)
+        .limit(PAGE_SIZE)
     )
     return [view(item) for item in rows]
 
@@ -113,41 +116,59 @@ async def notifications(
     owner: Owner,
     db: DB,
     offset: Annotated[int, Query(ge=0)] = 0,
+    before: UUID | None = None,
 ) -> list[NotificationView]:
+    page = select(Notification).where(Notification.owner_id == owner)
+    if before is not None:
+        page = page.where(before_record(Notification, owner, before))
     rows = await db.scalars(
-        select(Notification)
-        .where(Notification.owner_id == owner)
-        .order_by(Notification.created_at.desc(), Notification.id)
+        page.order_by(Notification.created_at.desc(), Notification.id.desc())
         .offset(offset)
-        .limit(30)
+        .limit(PAGE_SIZE)
     )
     return [NotificationView.model_validate(row) for row in rows]
 
 
-async def guest_credential(verification_id: UUID, raw: str | None, db: DB) -> tuple[Verification, Guest]:
+async def guest_credential(
+    verification_id: UUID, raw: str | None, db: DB, *, lock: bool = True
+) -> tuple[Verification, Guest]:
     if raw is None or len(raw) != 43:
         raise HTTPException(404, "This seller link is unavailable.")
-    # All mutations take the verification lock first, including admin revocation.
-    item = await db.scalar(
-        select(Verification).where(Verification.id == verification_id).with_for_update()
+    credential = (
+        Guest.verification_id == verification_id,
+        Guest.token_hash == token_hash(raw),
+        Guest.scope == GUEST_SCOPE,
     )
-    if item is None:
-        raise HTTPException(404, "This seller link is unavailable.")
-    guest = await db.scalar(
-        select(Guest).where(
-            Guest.verification_id == item.id,
-            Guest.token_hash == token_hash(raw),
-            Guest.scope == GUEST_SCOPE,
+    if lock:
+        # Keep the write lock order used by revocation, then recheck the guest after it is acquired.
+        item = await db.scalar(
+            select(Verification)
+            .where(
+                Verification.id == verification_id,
+                select(Guest.id).where(*credential, Guest.revoked_at.is_(None)).exists(),
+            )
+            .with_for_update()
         )
-    )
-    if guest is None or guest.revoked_at or guest.expires_at <= now() or item.status == Status.CANCELLED:
+        guest = await db.scalar(select(Guest).where(*credential)) if item is not None else None
+    else:
+        row = (
+            await db.execute(select(Verification, Guest).join(Guest).where(*credential))
+        ).one_or_none()
+        item, guest = row if row is not None else (None, None)
+    if (
+        item is None
+        or guest is None
+        or guest.revoked_at
+        or guest.expires_at <= now()
+        or item.status == Status.CANCELLED
+    ):
         raise HTTPException(404, "This seller link expired or was revoked.")
     return item, guest
 
 
 async def guest_session(verification_id: UUID, request: Request, db: DB) -> tuple[Verification, Guest]:
     token = request.headers.get("X-Guest-Token") or request.cookies.get(GUEST_COOKIE)
-    return await guest_credential(verification_id, token, db)
+    return await guest_credential(verification_id, token, db, lock=request.method != "GET")
 
 
 GuestSession = Annotated[tuple[Verification, Guest], Depends(guest_session)]
@@ -213,10 +234,11 @@ async def start_scan(data: StartScan, current: GuestSession, db: DB) -> ScanTick
         db.add(scan)
         await db.flush()
     else:
+        if scan.platform != data.platform:
+            external = await db.scalar(select(ExternalScan.id).where(ExternalScan.scan_id == scan.id))
+            if external is not None:
+                await db.execute(delete(Evidence).where(Evidence.external_scan_id == external))
         scan.platform = data.platform
-        external = await db.scalar(select(ExternalScan.id).where(ExternalScan.scan_id == scan.id))
-        if external:
-            await db.execute(delete(Evidence).where(Evidence.external_scan_id == external))
         await db.execute(
             update(Challenge)
             .where(Challenge.scan_id == scan.id, Challenge.consumed_at.is_(None))

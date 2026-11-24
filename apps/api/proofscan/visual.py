@@ -7,6 +7,11 @@ os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", "6000000")
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
+from .blocking_work import WorkBudget  # noqa: E402
+
+MAX_PHOTO_BYTES = 750_000
+photo_work = WorkBudget(slots=2)
+
 
 @dataclass(frozen=True)
 class Photo:
@@ -19,7 +24,7 @@ class Photo:
 
 
 def process_photo(raw: bytes) -> Photo:
-    if not raw.startswith(b"\xff\xd8\xff") or len(raw) > 750_000:
+    if not raw.startswith(b"\xff\xd8\xff") or len(raw) > MAX_PHOTO_BYTES:
         raise ValueError("Choose a JPEG photo under 750 KB.")
     try:
         image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)

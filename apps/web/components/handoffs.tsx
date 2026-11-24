@@ -10,6 +10,7 @@ import { ErrorNote, PublicShell, Status } from "./shared";
 import { downloadTicket } from "./seller";
 import { jpeg } from "./photo-capture";
 import { EvidenceGallery } from "./evidence-gallery";
+import { LoadMore, useOwnerCollection } from "./owner-collection";
 import { AuthDialog } from "./workspace-forms";
 import { Button, buttonVariants } from "./ui/button";
 
@@ -23,8 +24,10 @@ export function HandoffList() {
   const router = useRouter();
   const client = useQueryClient();
   const [signIn, setSignIn] = useState(false);
-  const session = useQuery({ queryKey: ["session"], queryFn: () => api<{ simulator_enabled: boolean }>("/auth/session") });
-  const list = useQuery({ queryKey: ["handoffs"], enabled: session.isSuccess, queryFn: () => api<Handoff[]>("/handoffs") });
+  const session = useQuery({
+    queryKey: ["session"], queryFn: () => api<{ user_id: string; simulator_enabled: boolean }>("/auth/session"),
+  });
+  const list = useOwnerCollection<Handoff>("/handoffs", "handoffs", session.data?.user_id);
   const create = useMutation({
     mutationFn: (body: { label: string; mode: HandoffMode }) => api<Handoff>("/handoffs", body),
     onSuccess: item => { void client.invalidateQueries({ queryKey: ["handoffs"] }); router.push("/handoffs/" + item.id); },
@@ -51,9 +54,11 @@ export function HandoffList() {
       <Button type="submit" disabled={create.isPending}>Create handoff</Button>
     </form>
     <section className="panel form"><h2>Your handoffs</h2>
-      {list.isPending ? <p role="status">Loading handoffs…</p> : list.data?.length ? <ul className="records-list">{list.data.map(item => <li key={item.id}>
+      {list.isPending ? <p role="status">Loading handoffs…</p> : list.items.length ? <ul className="records-list">{list.items.map(item => <li key={item.id}>
         <Link href={"/handoffs/" + item.id} className="quiet-link">{item.label}</Link><Status value={handoffLabels[item.status] ?? item.status} />
       </li>)}</ul> : <p>No handoffs yet.</p>}
+      {list.hasNextPage && <LoadMore onClick={() => void list.fetchNextPage()}
+        busy={list.isFetching} loading={list.isFetchingNextPage} />}
     </section></div>}
   </PublicShell>;
 }

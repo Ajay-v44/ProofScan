@@ -3,7 +3,10 @@ FROM python:3.12-slim AS dependencies
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /srv/proofscan
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+ARG PROOFSCAN_INSTALL_AGENT=false
+RUN if [ "$PROOFSCAN_INSTALL_AGENT" = "true" ]; then \
+      uv sync --frozen --no-dev --no-install-project --extra agent; \
+    else uv sync --frozen --no-dev --no-install-project; fi
 
 FROM python:3.12-slim
 RUN groupadd --system proofscan && useradd --system --gid proofscan proofscan
@@ -11,6 +14,7 @@ WORKDIR /srv/proofscan
 COPY --from=dependencies /srv/proofscan/.venv ./.venv
 COPY apps/api ./apps/api
 COPY alembic.ini ./
+RUN mkdir -p /srv/proofscan/.agent-cache && chown proofscan:proofscan /srv/proofscan/.agent-cache
 ENV PATH="/srv/proofscan/.venv/bin:${PATH}" PYTHONPATH="/srv/proofscan/apps/api" PYTHONDONTWRITEBYTECODE=1
 USER proofscan
 EXPOSE 8000

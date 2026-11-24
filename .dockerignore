@@ -84,6 +84,7 @@ apps/mobile/ios
 **/target
 **/__pycache__
 **/.expo
+**/.agent-cache
 **/*.tsbuildinfo
 .venv
 .uv-cache

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .blocking_work import WorkBudget
 from .config import settings
 from .db import User, now, session
 from .schemas import Credentials
@@ -22,6 +23,7 @@ from .signing import decode, encode
 DB = Annotated[AsyncSession, Depends(session, scope="function")]
 COOKIE = "proofscan_session"
 router = APIRouter(prefix="/auth", tags=["authentication"])
+password_work = WorkBudget(slots=4)
 
 
 def password_digest(password: str, salt: bytes) -> str:
@@ -63,6 +65,8 @@ async def subject(token: str) -> UUID:
                 options={"require": ["sub", "exp", "iat"]},
             )
         return UUID(claims["sub"])
+    except jwt.PyJWKClientConnectionError as exc:
+        raise HTTPException(503, "Sign-in service is unavailable.") from exc
     except (jwt.PyJWTError, ValueError, TypeError) as exc:
         raise HTTPException(401, "Your session has expired. Sign in again.") from exc
 
@@ -75,10 +79,10 @@ async def current_user(request: Request, db: DB) -> UUID:
     if not token:
         raise HTTPException(401, "Sign in to continue.")
     user = await subject(token)
-    if settings().auth_mode == "supabase":
+    if await db.scalar(select(User.id).where(User.id == user)) is None:
+        if settings().auth_mode != "supabase":
+            raise HTTPException(401, "Sign in again.")
         await db.execute(insert(User).values(id=user).on_conflict_do_nothing(index_elements=["id"]))
-    elif await db.get(User, user) is None:
-        raise HTTPException(401, "Sign in again.")
     return user
 
 
@@ -131,16 +135,24 @@ async def supabase_login(data: Credentials, response: Response, *, signup: bool)
             )
     except httpx.RequestError as exc:
         raise HTTPException(503, "Sign-in service is unavailable.") from exc
+    if result.status_code == 429 or result.status_code >= 500:
+        raise HTTPException(503, "Sign-in service is unavailable.")
     if not result.is_success:
         raise HTTPException(
             400 if signup else 401, "Could not create account." if signup else "Invalid sign-in."
         )
-    payload = result.json()
-    if signup and not payload.get("access_token"):
-        return {"message": "Check your email to confirm your account, then sign in."}
-    token = payload["access_token"]
+    try:
+        payload = result.json()
+        token = payload.get("access_token")
+        if signup and token is None:
+            return {"message": "Check your email to confirm your account, then sign in."}
+        lifetime = int(payload.get("expires_in", 3600))
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise HTTPException(503, "Sign-in service is unavailable.") from exc
+    if not isinstance(token, str) or not token or lifetime <= 0:
+        raise HTTPException(503, "Sign-in service is unavailable.")
     user = await subject(token)
-    set_cookie(response, COOKIE, token, "/", min(int(payload.get("expires_in", 3600)), 3600))
+    set_cookie(response, COOKIE, token, "/", min(lifetime, 3600))
     return {"user_id": str(user)}
 
 
@@ -149,7 +161,7 @@ async def register(data: Credentials, response: Response, db: DB) -> dict[str, s
     if settings().auth_mode == "supabase":
         return await supabase_login(data, response, signup=True)
     salt = secrets.token_bytes(16)
-    digest = await asyncio.to_thread(password_digest, data.password, salt)
+    digest = await password_work.run(password_digest, data.password, salt)
     insert_user = (
         insert(User)
         .values(email=data.email, password_hash=f"{encode(salt)}.{digest}")
@@ -168,7 +180,7 @@ async def authenticate(data: Credentials, response: Response, db: DB) -> dict[st
         return await supabase_login(data, response, signup=False)
     user = await db.scalar(select(User).where(User.email == data.email))
     salt, expected = (user.password_hash or ".").split(".") if user else ("", "")
-    digest = await asyncio.to_thread(password_digest, data.password, decode(salt) if salt else bytes(16))
+    digest = await password_work.run(password_digest, data.password, decode(salt) if salt else bytes(16))
     if not user or not hmac.compare_digest(digest, expected):
         raise HTTPException(401, "Invalid email or password.")
     return login(response, user.id)

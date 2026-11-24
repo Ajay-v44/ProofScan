@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from typing import Annotated
 
@@ -36,19 +37,18 @@ async def suggest(data: Listing, user: Owner, db: DB) -> Claims | JSONResponse:
     )
     if (count or 0) >= 10:
         raise HTTPException(429, "You have reached today's listing assistance limit.")
+    # Persist the quota reservation before contacting the provider so its latency holds no database locks.
+    call = ModelCall(owner_id=user, accepted=False)
+    db.add(call)
+    await db.commit()
     try:
-        result = await provider.suggest(data.listing)
-    except (httpx.HTTPError, KeyError, ValueError, TypeError, IndexError, OverflowError):
-        db.add(ModelCall(owner_id=user, accepted=False))
+        async with asyncio.timeout(15):
+            result = await provider.suggest(data.listing)
+    except (TimeoutError, httpx.HTTPError, KeyError, ValueError, TypeError, IndexError, OverflowError):
         return JSONResponse(
             {"detail": "Listing assistance is unavailable. Enter the claims manually."}, status_code=503
         )
-    db.add(
-        ModelCall(
-            owner_id=user,
-            accepted=True,
-            input_tokens=result.input_tokens,
-            output_tokens=result.output_tokens,
-        )
-    )
+    call.accepted = True
+    call.input_tokens = result.input_tokens
+    call.output_tokens = result.output_tokens
     return result.claims
