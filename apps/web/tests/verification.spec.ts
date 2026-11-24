@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 
 async function createVerification(buyer: Page, label: string, claims = true) {
-  await buyer.goto("/");
+  await buyer.goto("/workspace");
   await buyer.getByRole("button", { name: "Create an account" }).click();
   await buyer.getByLabel("Email").fill("e2e-" + randomUUID() + "@example.test");
   await buyer.getByLabel("Password").fill("Local-Playwright-" + randomUUID());

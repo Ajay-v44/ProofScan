@@ -4,8 +4,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { version } from "../package.json";
 
-export function Brand() {
-  return <Link href="/" className="brand"><Image src="/brand/proofscan-mark.webp" width={36} height={36} alt="" className="brand-mark" unoptimized />ProofScan</Link>;
+export function Brand({ href = "/" }: { href?: "/" | "/workspace" }) {
+  return <Link href={href} className="brand"><Image src="/brand/proofscan-mark.webp" width={36} height={36} alt="" className="brand-mark" unoptimized />ProofScan</Link>;
 }
 
 export function ProductFooter() {
@@ -19,7 +19,7 @@ export function PublicShell({ children, wide = false, isGuest = false }: { child
     <a className="skip-link" href="#main">Skip to content</a>
     <header className="public-head"><div className="public-head-inner"><Brand /><nav className="public-navigation" aria-label="ProofScan">
       {isGuest ? <Link className="nav-link" href="/help">Help</Link> : <>
-      <Link className="nav-link" href="/"><LayoutGrid size={17} aria-hidden />Workspace</Link>
+      <Link className="nav-link" href="/workspace"><LayoutGrid size={17} aria-hidden />Workspace</Link>
       <Link className="nav-link" href="/verify"><ShieldCheck size={17} aria-hidden />Check a report</Link>
       </>}
     </nav></div></header>

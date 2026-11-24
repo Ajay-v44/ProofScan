@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 test("owner records baseline, receiver accepts and return produces a signed comparison", async ({ page, browser }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
   await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Email").fill("handoff-" + randomUUID() + "@example.test");
   await page.getByLabel("Password").fill("Playwright-handoff-" + randomUUID());

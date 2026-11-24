@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 test("workspace search opens an example report and keeps its data separate", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
   await expect(page.getByRole("heading", { name: "Your workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Example verifications" })).toBeVisible();
   await page.keyboard.press("Control+k");
@@ -27,7 +27,7 @@ test("workspace search opens an example report and keeps its data separate", asy
 
 test("workspace is usable at phone width and preserves the handoff entry", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
+  await page.goto("/workspace");
   await expect(page.getByRole("heading", { name: "Your workspace" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Search workspace" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Handoffs", exact: true })).toBeVisible();
@@ -50,7 +50,7 @@ test("the workspace can load older verifications from PostgreSQL", async ({ page
     });
     expect(response.ok()).toBeTruthy();
   }
-  await page.goto("/");
+  await page.goto("/workspace");
   const oldest = page.getByText("Fixture verification 0", { exact: true });
   await expect(page.locator(".verification-item")).toHaveCount(30);
   await expect(oldest).toHaveCount(0);
@@ -83,7 +83,7 @@ test("device advisor saves a private catalog item and cites it", async ({ page }
 });
 
 test("workspace navigation and product information reflow across screen sizes", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/workspace");
   for (const width of [320, 390, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(page.getByRole("heading", { name: "Your workspace" })).toBeVisible();
@@ -111,7 +111,7 @@ test("workspace navigation and product information reflow across screen sizes", 
     data: { email: "compact-" + randomUUID() + "@example.test", password: "Fixture-" + randomUUID() },
   });
   expect(account.ok()).toBeTruthy();
-  await page.goto("/");
+  await page.goto("/workspace");
   await expect(page.getByRole("button", { name: "New verification" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });
