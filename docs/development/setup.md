@@ -23,13 +23,13 @@ $env:PYTHONPATH = "apps/api"
 uv run --no-sync uvicorn proofscan.main:app --host 127.0.0.1 --port 8000
 ```
 
-In a second terminal, run `npm run dev` and open [ProofScan](http://localhost:3000). The Next.js server forwards `/api/v1` to the API at `API_INTERNAL_ORIGIN`, which defaults to `http://127.0.0.1:8000`. [OpenAPI docs](http://127.0.0.1:8000/docs) are available directly from the API.
+In a second terminal, run `npm run dev`. Open the [presentation page](http://localhost:3000/home) or the [buyer workspace](http://localhost:3000/workspace). The Next.js server forwards `/api/v1` to the API at `API_INTERNAL_ORIGIN`, which defaults to `http://127.0.0.1:8000`. [OpenAPI docs](http://127.0.0.1:8000/docs) are available directly from the API.
 
 Register an ordinary account. To provision operator access locally, read its UUID from `/api/v1/auth/session` while signed in, set `ADMIN_SUBJECTS=["<uuid>"]` and restart the API. Operator functions then appear in the sidebar.
 
 ## Windows desktop
 
-Install Rust stable, Visual Studio Build Tools with MSVC and the Windows SDK, and the Edge WebView2 runtime. Start the web workspace, then run `npm run tauri -w @proofscan/desktop -- dev`. The desktop development app opens the workspace at `http://localhost:3000`. Choose **ProofScan → Device scanner** to load a scan ticket and export readings. Use `PROOFSCAN_WEB_ORIGIN` in the Tauri build environment to set a release workspace origin over HTTPS. The Windows collector is also downloadable from the seller page.
+Install Rust stable, Visual Studio Build Tools with MSVC and the Windows SDK, and the Edge WebView2 runtime. Start the web workspace, then run `npm run tauri -w @proofscan/desktop -- dev`. The desktop development app opens the workspace at `http://localhost:3000/workspace`. Choose **ProofScan → Device scanner** to load a scan ticket and export readings. Use `PROOFSCAN_WEB_ORIGIN` in the Tauri build environment to set a release workspace origin over HTTPS. The Windows collector is also downloadable from the seller page.
 
 ## macOS and mobile
 

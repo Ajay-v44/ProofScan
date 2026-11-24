@@ -17,7 +17,7 @@ import { Dialog } from "./ui/dialog";
 import { AuthDialog, NewVerification } from "./workspace-forms";
 import { WorkspaceFrame, type WorkspaceSection } from "./workspace-frame";
 
-type Session = { user_id: string; admin: boolean; listing_assistance: boolean };
+type Session = { user_id: string; listing_assistance: boolean };
 type Example = { id: string; label: string; detail: string; report: Report };
 type Filter = "All" | "In progress" | "Shared" | "Closed";
 type Overlay = "sign-in" | "register" | "new" | "seller" | "search" | "account" | null;
@@ -241,7 +241,7 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
   function viewRecord(id: string) { close(); setSample(null); setSelected(id); }
 
   return <>
-    <WorkspaceFrame page={section} onSectionChange={setSection} admin={user?.admin}
+    <WorkspaceFrame page={section} onSectionChange={setSection}
       sidebarActions={<>
         <button type="button" className="nav-link" onClick={() => setOverlay("seller")}><Link2 size={18} aria-hidden />Open a seller link</button>
         {user ? <button type="button" className="nav-link" onClick={() => logout.mutate()} disabled={logout.isPending}><LogOut size={18} aria-hidden />Sign out</button>
@@ -313,7 +313,6 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
           <button type="button" onClick={() => setOverlay("seller")}>Open a seller link</button>
           <button type="button" onClick={() => { setSection("Activity"); close(); }}>Activity</button>
           <Link href="/verify">Check a report</Link>
-          {user?.admin && <Link href="/admin">Operator</Link>}
           <Link href="/about">About ProofScan</Link>
           <Link href="/help">Help</Link>
           {user ? <button type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>Sign out</button>

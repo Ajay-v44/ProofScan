@@ -159,9 +159,10 @@ fn workspace_window(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("workspace") {
         return window.set_focus().map_err(|err| err.to_string());
     }
-    let url = workspace_origin()
+    let mut url = workspace_origin()
         .ok_or("Set the ProofScan workspace origin before building the desktop app.")?;
     let origin = url.origin();
+    url.set_path("/workspace");
     WebviewWindowBuilder::new(app, "workspace", WebviewUrl::External(url))
         .title("ProofScan")
         .inner_size(1200.0, 820.0)

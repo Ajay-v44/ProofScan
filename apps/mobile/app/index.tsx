@@ -72,7 +72,7 @@ export default function Workspace() {
     <View style={workspaceStyles.body}>
       {origin && <View pointerEvents={visible ? "auto" : "none"} accessibilityElementsHidden={!visible}
         importantForAccessibility={visible ? "auto" : "no-hide-descendants"} style={workspaceStyles.body}>
-        <WebView<Record<never, never>> ref={browser} key={attempt} source={{ uri: origin }} originWhitelist={["*"]} style={workspaceStyles.web}
+        <WebView<Record<never, never>> ref={browser} key={attempt} source={{ uri: origin + "/workspace" }} originWhitelist={["*"]} style={workspaceStyles.web}
           allowFileAccess={false} allowFileAccessFromFileURLs={false} allowUniversalAccessFromFileURLs={false}
           mixedContentMode="never" thirdPartyCookiesEnabled={false}
           onShouldStartLoadWithRequest={request => isWorkspaceUrl(request.url, origin)}

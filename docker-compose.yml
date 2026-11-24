@@ -96,6 +96,12 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/web.Dockerfile
+      args:
+        PROOFSCAN_SITE_URL: ${PROOFSCAN_SITE_URL:-}
+        PROOFSCAN_WINDOWS_DOWNLOAD_URL: ${PROOFSCAN_WINDOWS_DOWNLOAD_URL:-}
+        PROOFSCAN_MACOS_DOWNLOAD_URL: ${PROOFSCAN_MACOS_DOWNLOAD_URL:-}
+        PROOFSCAN_ANDROID_DOWNLOAD_URL: ${PROOFSCAN_ANDROID_DOWNLOAD_URL:-}
+        PROOFSCAN_IOS_DOWNLOAD_URL: ${PROOFSCAN_IOS_DOWNLOAD_URL:-}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

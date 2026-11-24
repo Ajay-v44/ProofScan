@@ -23,7 +23,7 @@ ProofScan also records asset handoffs. Owners capture a baseline, can request re
 
 | Service | What it does | Default address or entry point | Dependencies |
 | --- | --- | --- | --- |
-| Web | Buyer workspace, seller pages, handoffs, signature check, and operator tools | [localhost:3000](http://localhost:3000) | API |
+| Web | Public product presentation, buyer workspace, seller pages, handoffs, signature check, and operator tools | [Presentation](http://localhost:3000/home) · [Workspace](http://localhost:3000/workspace) | API for workspace workflows |
 | API | FastAPI authentication, verification state, evidence, reports, signing, and operator endpoints | [Health](http://127.0.0.1:8000/health), [OpenAPI docs](http://127.0.0.1:8000/docs) | Migrated PostgreSQL, report signing key |
 | PostgreSQL | Stores accounts, verification state, private evidence, report records, and audit events | Host port `5432` or Compose service `db` | Database credentials and migrations |
 | Migrations | Alembic applies schema changes before the API and worker start | `alembic upgrade head`; one-shot Compose service `migrate` | PostgreSQL |
@@ -146,7 +146,9 @@ npm ci
 npm run dev
 ```
 
-Open [localhost:3000](http://localhost:3000). Next.js sends browser API requests through its same-origin `/api/v1` rewrite. The upstream defaults to `http://127.0.0.1:8000`. If the API uses a different address, set `API_INTERNAL_ORIGIN` in the web process environment before starting Next.js. Set it before the production build as well when using the generated standalone server.
+Open the [buyer workspace](http://localhost:3000/workspace) or the [public presentation](http://localhost:3000/home). Next.js sends browser API requests through its same-origin `/api/v1` rewrite. The upstream defaults to `http://127.0.0.1:8000`. If the API uses a different address, set `API_INTERNAL_ORIGIN` in the web process environment before starting Next.js. Set it before the production build as well when using the generated standalone server.
+
+The presentation includes interactive sample reports for purchase, pickup, and return checks. See [marketing settings](docs/deployment/README.md#public-marketing-and-downloads) to configure the public domain and platform downloads.
 
 To enable operator tools, sign in with the intended account. Open `/api/v1/auth/session` on the web origin in that browser session, copy its user ID, and add the UUID to the JSON array in `ADMIN_SUBJECTS`. Restart the API and refresh the workspace.
 
@@ -196,7 +198,7 @@ npm ci
 npm run tauri -w @proofscan/desktop -- dev
 ```
 
-The development app opens the browser workspace at `http://localhost:3000`. In the app menu, select **ProofScan → Device scanner**, open a matching platform ticket, and export the readings. Import the scan into the seller page to review it. On macOS the collector reads available model, CPU name, and memory. See the [implementation status](docs/status.md) for platform validation.
+The development app opens the browser workspace at `http://localhost:3000/workspace`. In the app menu, select **ProofScan → Device scanner**, open a matching platform ticket, and export the readings. Import the scan into the seller page to review it. On macOS the collector reads available model, CPU name, and memory. See the [implementation status](docs/status.md) for platform validation.
 
 To build the native desktop executable, export an HTTPS `PROOFSCAN_WEB_ORIGIN` in the build terminal, then run the matching command.
 
@@ -257,7 +259,7 @@ Processed exterior photos currently live in PostgreSQL. See [implementation stat
 
 ### Purchase verification
 
-1. At [localhost:3000](http://localhost:3000), create a buyer account and sign in. Create a verification with a device name and one or more listing claims.
+1. In the [buyer workspace](http://localhost:3000/workspace), create a buyer account and sign in. Create a verification with a device name and one or more listing claims.
 2. Open the generated seller link in a separate browser profile or private window. Give consent and complete the enabled simulator flow or collect supported device readings and clear front and back photos.
 3. Review the collected information and select **Share signed report**. Return to the buyer workspace and open the completed verification’s report.
 4. Use the public **Verify** page at `/verify` and enter the report ID. Test a separate seller request with the decline option to verify that the buyer cannot open a private report.
