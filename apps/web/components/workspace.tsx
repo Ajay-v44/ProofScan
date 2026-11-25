@@ -3,9 +3,10 @@
 import { api, ApiError, type Notification, type Report, type Verification } from "@proofscan/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Bell, FileCheck2, FolderOpen, Grid2X2, Laptop,
+  ArrowRight, Bell, FileCheck2, FolderOpen, Grid2X2, Laptop,
   Ellipsis, Link2, List, LogOut, PackageCheck, Plus, RefreshCw, ScanLine, Search, ShieldCheck, Sparkles, UserRound,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
@@ -272,10 +273,20 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
             </div>
           </div>
           <div className="quick-links">
-            <Link className="quick-link" href="/handoffs"><span className="icon-tile"><PackageCheck size={21} aria-hidden /></span>
-              <span><strong>Protect a handoff</strong><small>Compare condition at checkout and return.</small></span></Link>
-            <Link className="quick-link" href="/advisor"><span className="icon-tile"><Sparkles size={21} aria-hidden /></span>
-              <span><strong>Compare devices</strong><small>Ask Buyer Chat about reports shared with you.</small></span></Link>
+            <Link className="quick-link" href="/handoffs">
+              <span className="quick-link-copy">
+                <strong>Protect a handoff <ArrowRight size={16} aria-hidden /></strong>
+                <small>Compare condition at checkout and return.</small>
+              </span>
+              <span className="quick-link-photo"><Image src="/workspace/verify.webp" alt="" fill unoptimized /></span>
+            </Link>
+            <Link className="quick-link" href="/advisor">
+              <span className="quick-link-copy">
+                <strong>Compare devices <ArrowRight size={16} aria-hidden /></strong>
+                <small>Ask Buyer Chat about reports shared with you.</small>
+              </span>
+              <span className="quick-link-photo quick-link-photo-phones"><Image src="/marketing/proofscan-hero.webp" alt="" fill unoptimized /></span>
+            </Link>
           </div>
         </section>}
         {section !== "Activity" ? <>

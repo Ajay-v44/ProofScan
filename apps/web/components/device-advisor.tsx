@@ -1,55 +1,22 @@
 "use client";
 
-import { api, apiDelete, ApiError, type AdvisorResult, type CatalogItem } from "@proofscan/api-client";
+import { api, apiDelete, ApiError, type BuyerChatAnswer, type CatalogItem } from "@proofscan/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUp, MessageSquare, Plus, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { LoadMore } from "./owner-collection";
 import { ErrorNote } from "./shared";
-import { WorkspaceFrame } from "./workspace-frame";
+import { Dialog } from "./ui/dialog";
 import { Button } from "./ui/button";
+import { WorkspaceFrame } from "./workspace-frame";
 import { AuthDialog } from "./workspace-forms";
+import "./buyer-chat.css";
 
-const pageSize = 30;
-const categories = [["phone", "Phone"], ["tablet", "Tablet"], ["laptop", "Laptop"], ["other", "Other"]];
-const starterQuestions = ["Which has the healthiest battery?", "Which has the most memory?", "Compare storage capacity"];
-const measurements = [
-  ["battery_health_percent", "Battery health", "%"],
-  ["memory_gib", "Memory", " GiB"],
-  ["storage_gb", "Storage", " GB"],
-] as const;
-
-function CategoryInput({ label, all = false }: { label: string; all?: boolean }) {
-  return <label>{label}<select name="category" defaultValue={all ? "" : "phone"}>
-    {all && <option value="">All devices</option>}
-    {categories.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
-  </select></label>;
-}
-
-function PriceFields({ label }: { label: string }) {
-  return <div className="advisor-price">
-    <label>{label}<input type="number" name="amount" min={1} max={100_000_000} /></label>
-    <label>Currency<input name="currency" placeholder="INR" pattern="[A-Z]{3}" maxLength={3} /></label>
-  </div>;
-}
-
-function priceFields(data: FormData) {
-  const value = String(data.get("amount") ?? "").trim();
-  return { amount: value ? Number(value) : null, currency: String(data.get("currency") ?? "").trim() || null };
-}
-
-function Source({ item }: { item: CatalogItem }) {
-  return <>
-    <strong>{item.title}</strong>
-    {item.price !== null && <span>{item.facts?.estimated_price ? "Comparable estimate up to " : ""}{item.currency} {item.price.toLocaleString()}</span>}
-    {item.verification_id ? <dl className="advisor-measurements">{measurements.map(([field, label, unit]) => {
-      const value = item.facts?.[field];
-      return <div key={field}><dt>{label}</dt><dd>{typeof value === "number" ? value.toLocaleString() + unit : "Unavailable"}</dd></div>;
-    })}</dl> : <p>{item.notes}</p>}
-    {item.verification_id && <Link className="quiet-link" href={"/reports/" + item.verification_id}>Open signed report</Link>}
-    {item.source_url && <a className="quiet-link" href={item.source_url} rel="noreferrer">Open source</a>}
-  </>;
-}
+type Market = "IN" | "US" | "GB";
+type Turn = { id: number; question: string; answer?: BuyerChatAnswer };
+const markets = { IN: "India", US: "United States", GB: "United Kingdom" } as const;
+const catalogPageSize = 30;
 
 export function DeviceAdvisor() {
   const [signIn, setSignIn] = useState(false);
@@ -57,135 +24,185 @@ export function DeviceAdvisor() {
   const loggedOut = session.error instanceof ApiError && session.error.status === 401;
 
   return <WorkspaceFrame page="Buyer chat">
-    <div className="page-title"><h1>Buyer chat</h1>
-      <p>Ask which device is the better buy using signed reports shared with you.</p></div>
+    <div className="page-title"><h1>Buyer chat</h1></div>
     <ErrorNote error={loggedOut ? null : session.error} />
-    {session.isPending && <p role="status">Opening your catalog…</p>}
+    {session.isPending && <p role="status">Opening chat…</p>}
     {loggedOut && <section className="panel form">
-      <p>Sign in to use your private catalog.</p>
+      <h2>Ask about ProofScan and your devices</h2>
+      <p>Sign in to compare your shared reports, ask how checks work, or look up a device.</p>
       <Button onClick={() => setSignIn(true)}>Sign in</Button>
     </section>}
-    {signIn && !session.data && <AuthDialog initialRegister={false} onAuthenticated={() => setSignIn(false)} onClose={() => setSignIn(false)} />}
-    {session.data && !session.isError && <AdvisorForms key={session.data.user_id} owner={session.data.user_id} />}
+    {signIn && <AuthDialog initialRegister={false} onAuthenticated={() => setSignIn(false)} onClose={() => setSignIn(false)} />}
+    {session.data && !session.isError && <Chat key={session.data.user_id} owner={session.data.user_id} />}
   </WorkspaceFrame>;
 }
 
-function AdvisorForms({ owner }: { owner: string }) {
-  const client = useQueryClient();
+function Answer({ value }: { value: BuyerChatAnswer }) {
+  return <div className="buyer-chat-answer">
+    {value.message.split("\n\n").map((part, index) => <p key={index}>{part}</p>)}
+    {!!value.sources.length && <div className="buyer-chat-citations">
+      <h3>Sources</h3>
+      <ul>{value.sources.map((source, index) => <li key={`${source.kind}-${index}`}>
+        <strong>{source.title}</strong>
+        {source.detail && <p>{source.detail}</p>}
+        {source.kind === "web" && source.href
+          ? <PublicSource href={source.href} />
+          : source.href && <Link className="quiet-link" href={source.href}>{source.kind === "report" ? "Open signed report" : "Open guide"}</Link>}
+      </li>)}</ul>
+    </div>}
+    {value.checked_at && <p className="buyer-chat-time">Search checked <time dateTime={value.checked_at}>{new Date(value.checked_at).toLocaleString()}</time></p>}
+  </div>;
+}
+
+function PublicSource({ href }: { href: string }) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "show-link">("idle");
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(href);
+      setCopyState("copied");
+    } catch {
+      setCopyState("show-link");
+    }
+  }
+
+  return <div className="buyer-chat-source-links">
+    <a className="quiet-link" href={href} target="_blank" rel="noreferrer noopener">Open public source</a>
+    <Button variant="quiet" onClick={() => void copyLink()}>Copy link</Button>
+    {copyState === "copied" && <span role="status">Link copied</span>}
+    {copyState === "show-link" && <input aria-label="Public source address" readOnly value={href} onFocus={event => event.currentTarget.select()} />}
+  </div>;
+}
+
+function Chat({ owner }: { owner: string }) {
   const composer = useRef<HTMLTextAreaElement>(null);
-  const [offset, setOffset] = useState(0);
-  const [turns, setTurns] = useState<{ question: string; answer: AdvisorResult }[]>([]);
-  const listKey = ["advisor-catalog", owner] as const;
-  const catalog = useQuery({
-    queryKey: [...listKey, offset],
-    queryFn: () => api<CatalogItem[]>("/agent/catalog?offset=" + offset),
-  });
+  const log = useRef<HTMLDivElement>(null);
+  const sequence = useRef(0);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [draft, setDraft] = useState("");
+  const [options, setOptions] = useState(false);
+  const [catalog, setCatalog] = useState(false);
+  const [market, setMarket] = useState<Market>("IN");
+  const [allowWeb, setAllowWeb] = useState(true);
+  const [allowModel, setAllowModel] = useState(false);
+  const [includeListings, setIncludeListings] = useState(false);
   const ask = useMutation({
-    mutationFn: (data: FormData) => {
-      const { amount, currency } = priceFields(data);
-      const question = String(data.get("question") ?? "").trim();
-      return api<AdvisorResult>("/agent/ask", {
-        question,
-        previous_question: turns.at(-1)?.question,
-        category: String(data.get("category") ?? "") || null,
-        reports_only: data.get("include_listings") !== "on",
-        budget: amount, currency, allow_model: data.get("allow_model") === "on",
-      }).then(answer => ({ question, answer }));
-    },
-    onSuccess: turn => setTurns(current => [...current.slice(-9), turn]),
+    gcTime: 0,
+    mutationFn: ({ question, history }: { id: number; question: string; history: string[] }) =>
+      api<BuyerChatAnswer>("/agent/chat", { message: question, history, market,
+        allow_web: allowWeb, allow_model: allowModel, include_listings: includeListings }),
+    onSuccess: (answer, input) => setTurns(current => current.map(turn => turn.id === input.id ? { ...turn, answer } : turn)),
   });
+
+  useEffect(() => {
+    const thread = log.current;
+    if (thread) thread.scrollTop = thread.scrollHeight;
+  }, [turns, ask.isPending, ask.isError]);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const question = draft.trim();
+    if (ask.isPending || !question) return;
+    const id = sequence.current++;
+    setTurns(current => [...current.slice(-39), { id, question }]);
+    setDraft("");
+    ask.mutate({ id, question, history: turns.filter(turn => turn.answer).slice(-4).map(turn => turn.question) });
+  }
+
+  return <section className="buyer-chat" aria-label="Buyer conversation">
+    <header className="buyer-chat-header">
+      <Button variant="outline" disabled={ask.isPending} onClick={() => { ask.reset(); setTurns([]); setDraft(""); composer.current?.focus(); }}>
+        <Plus size={17} aria-hidden />New chat
+      </Button>
+      <div className="actions">
+        <Button variant="quiet" onClick={() => setCatalog(true)}>Saved listings</Button>
+        <Button variant="quiet" onClick={() => setOptions(true)}><SlidersHorizontal size={16} aria-hidden />Chat settings</Button>
+      </div>
+    </header>
+    <div ref={log} className="buyer-chat-log" role="log" aria-label="Conversation" tabIndex={0}>
+      {!turns.length && <div className="buyer-chat-empty">
+        <span className="icon-tile"><MessageSquare aria-hidden size={23} /></span>
+        <h2>What would you like to check?</h2>
+        <p>Ask how ProofScan works, compare your shared reports, or look up a device you’re considering.</p>
+      </div>}
+      {turns.map(turn => <article className="buyer-chat-turn" key={turn.id}>
+        <div className="buyer-chat-question"><span>You</span><p>{turn.question}</p></div>
+        {turn.answer && <div className="buyer-chat-reply"><span>ProofScan</span><Answer value={turn.answer} /></div>}
+      </article>)}
+      {ask.isPending && <p className="buyer-chat-progress" role="status">Checking sources…</p>}
+      {ask.isError && <div className="buyer-chat-failure">
+        <ErrorNote error={ask.error} />
+        {ask.variables && <Button variant="outline" onClick={() => { if (ask.variables) ask.mutate(ask.variables); }}>Retry answer</Button>}
+      </div>}
+    </div>
+    <form className="buyer-chat-compose" onSubmit={submit}>
+      <label htmlFor="buyer-chat-message" className="buyer-chat-sr-only">Ask ProofScan</label>
+      <div className="buyer-chat-input">
+        <textarea id="buyer-chat-message" ref={composer} value={draft} onChange={event => setDraft(event.target.value)}
+          rows={2} maxLength={1000} placeholder="Ask about a device or ProofScan" onKeyDown={event => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              if (!ask.isPending && draft.trim()) event.currentTarget.form?.requestSubmit();
+            }
+          }} />
+        <Button type="submit" disabled={ask.isPending || !draft.trim()} aria-label="Send message"><ArrowUp size={19} aria-hidden /></Button>
+      </div>
+      <p>{allowWeb ? "Public search · " + markets[market] : "Public search off"} · Chat stays in this window</p>
+    </form>
+    {options && <Dialog title="Chat settings" onClose={() => setOptions(false)}><div className="dialog-form">
+      <label>Default market<select value={market} onChange={event => setMarket(event.target.value as Market)}>
+        {Object.entries(markets).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label className="checkbox"><input type="checkbox" checked={allowWeb} onChange={event => setAllowWeb(event.target.checked)} />Allow public device search</label>
+      <p>Public search uses the recognized device model and market. Your conversation and reports stay in ProofScan.</p>
+      <label className="checkbox"><input type="checkbox" checked={includeListings} onChange={event => setIncludeListings(event.target.checked)} />Include my saved listings</label>
+      <label className="checkbox"><input type="checkbox" checked={allowModel} onChange={event => setAllowModel(event.target.checked)} />Use Moonshot to select and review public evidence</label>
+    </div></Dialog>}
+    {catalog && <Dialog title="Saved listings" onClose={() => setCatalog(false)}><SavedListings owner={owner} /></Dialog>}
+  </section>;
+}
+
+function SavedListings({ owner }: { owner: string }) {
+  const client = useQueryClient();
+  const [offset, setOffset] = useState(0);
+  const key = ["advisor-catalog", owner] as const;
+  const listing = useQuery({ queryKey: [...key, offset], queryFn: () => api<CatalogItem[]>("/agent/catalog?offset=" + offset) });
   const add = useMutation({
-    mutationFn: (data: FormData) => {
-      const { amount, currency } = priceFields(data);
-      return api<CatalogItem>("/agent/catalog", {
-        title: String(data.get("title")), category: String(data.get("category")), notes: String(data.get("notes")),
-        price: amount, currency, source_url: String(data.get("source_url") ?? "").trim() || null,
-      });
-    },
-    onSuccess: () => {
-      setOffset(0);
-      return client.invalidateQueries({ queryKey: listKey });
-    },
+    mutationFn: (form: FormData) => api<CatalogItem>("/agent/catalog", {
+      title: String(form.get("title")), category: form.get("category"), notes: String(form.get("notes")),
+      price: form.get("price") ? Number(form.get("price")) : null,
+      currency: String(form.get("currency") ?? "").trim() || null,
+      source_url: String(form.get("source_url") ?? "").trim() || null,
+    }),
+    onSuccess: () => { setOffset(0); return client.invalidateQueries({ queryKey: key }); },
   });
   const remove = useMutation({
     mutationFn: (id: string) => apiDelete("/agent/catalog/" + id),
     onSuccess: () => {
-      setOffset(current => catalog.data?.length === 1 ? Math.max(0, current - pageSize) : current);
-      return client.invalidateQueries({ queryKey: listKey });
+      if (listing.data?.length === 1 && offset) setOffset(offset - catalogPageSize);
+      return client.invalidateQueries({ queryKey: key });
     },
   });
-
-  function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    add.mutate(new FormData(form), { onSuccess: () => form.reset() });
-  }
-
-  return <div className="advisor-layout">
-    <section className="panel form advisor-panel">
-      <div className="advisor-heading"><h2>Compare devices</h2>
-        {turns.length > 0 && <Button variant="quiet" onClick={() => { setTurns([]); ask.reset(); composer.current?.focus(); }} disabled={ask.isPending}>Clear chat</Button>}
-      </div>
-      {!turns.length && <div className="advisor-starters" aria-label="Suggested questions" role="group">
-        {starterQuestions.map(question => <Button key={question} variant="outline" onClick={() => {
-          if (!composer.current) return;
-          composer.current.value = question;
-          composer.current.focus();
-        }}>{question}</Button>)}
-      </div>}
-      <div className="advisor-chat" role="log" aria-live="polite" aria-label="Conversation">
-        {turns.map(({ question, answer }, index) => <section className="advisor-turn" key={index}>
-          <p><strong>You</strong> {question}</p>
-          <h3>{answer.status === "answer" ? "Recommendation" : answer.status === "needs_input" ? "One more detail" : "No matching evidence"}</h3>
-          <p>{answer.message}</p>
-          {answer.sources.length > 0 && <><h4>Sources from your catalog</h4>
-            <ul className="advisor-source-cards">{answer.sources.map(item => <li key={item.id}><Source item={item} /></li>)}</ul></>}
-        </section>)}
-      </div>
-      <form className="form" onSubmit={event => {
-        event.preventDefault();
-        const form = event.currentTarget;
-        ask.mutate(new FormData(form), { onSuccess: () => {
-          if (composer.current) { composer.current.value = ""; composer.current.focus(); }
-        } });
-      }}>
-        <label>What are you looking for?<textarea ref={composer} name="question" rows={3} minLength={3} maxLength={600}
-          placeholder="Ask about the devices you’re considering" readOnly={ask.isPending} required /></label>
-        <details className="advisor-options" onInvalid={event => { event.currentTarget.open = true; }}><summary>Filters and AI options</summary>
-          <div className="form"><CategoryInput label="Device type" all />
-            <PriceFields label="Maximum budget" />
-            <label className="checkbox"><input type="checkbox" name="include_listings" />Include my saved listings</label>
-            <label className="checkbox"><input type="checkbox" name="allow_model" />Use Moonshot for this comparison</label>
-            <p className="muted">Only structured measurements, prices and recognized preferences are sent to Moonshot.</p>
-          </div>
-        </details>
-        <Button type="submit" disabled={ask.isPending}>Get a recommendation</Button>
-        {ask.isPending && <p role="status" className="muted">Checking your evidence…</p>}
-      </form>
-      <ErrorNote error={ask.error} />
-    </section>
-    <section className="panel form advisor-library">
-      <h2>Saved listings</h2>
-      <p className="muted">Keep listings you’re considering. Add them to a comparison with the chat filters.</p>
-      <details onInvalid={event => { event.currentTarget.open = true; }}><summary>Add a listing</summary>
-      <form className="form" onSubmit={save}>
-        <label>Device name<input name="title" minLength={2} maxLength={120} required /></label>
-        <CategoryInput label="Category" />
-        <label>Specifications or listing notes<textarea name="notes" rows={3} minLength={10} maxLength={3000} required /></label>
-        <PriceFields label="Listed price" />
-        <label>Public source URL<input type="url" name="source_url" maxLength={600} /></label>
-        <Button type="submit" disabled={add.isPending}>{add.isPending ? "Saving…" : "Add device"}</Button>
-      </form>
-      </details>
-      <ErrorNote error={catalog.error ?? add.error ?? remove.error} />
-      {catalog.isPending ? <p role="status">Loading devices…</p>
-        : catalog.data?.length ? <ul className="records-list advisor-sources">{catalog.data.map(item => <li key={item.id}>
-          <Source item={item} />
-          <Button variant="quiet" disabled={remove.isPending} onClick={() => remove.mutate(item.id)}
-            aria-label={"Remove " + item.title}>Remove</Button>
-        </li>)}</ul> : <p>No saved listings yet.</p>}
-      {offset > 0 && <Button variant="quiet" onClick={() => setOffset(value => value - pageSize)}>Previous devices</Button>}
-      {catalog.data?.length === pageSize && <LoadMore busy={catalog.isFetching} loading={false} onClick={() => setOffset(value => value + pageSize)} />}
-    </section>
+  return <div className="dialog-form">
+    <details><summary>Add a listing</summary><form className="form" onSubmit={event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      add.mutate(new FormData(form), { onSuccess: () => form.reset() });
+    }}>
+      <label>Device name<input name="title" minLength={2} maxLength={120} required /></label>
+      <label>Device type<select name="category"><option value="phone">Phone</option><option value="tablet">Tablet</option>
+        <option value="laptop">Laptop</option><option value="other">Other</option></select></label>
+      <label>Specifications or listing notes<textarea name="notes" minLength={10} maxLength={3000} required /></label>
+      <div className="advisor-price"><label>Asking price<input name="price" type="number" min={1} max={100000000} /></label>
+        <label>Currency<input name="currency" pattern="[A-Z]{3}" maxLength={3} placeholder="INR" /></label></div>
+      <label>Public source URL<input name="source_url" type="url" maxLength={600} /></label>
+      <Button type="submit" disabled={add.isPending}>Add device</Button>
+    </form></details>
+    <ErrorNote error={listing.error ?? add.error ?? remove.error} />
+    {listing.isPending ? <p role="status">Loading listings…</p> : !listing.data?.length ? <p>No saved listings on this page.</p>
+      : <ul className="records-list advisor-sources">{listing.data.map(item => <li key={item.id}><strong>{item.title}</strong>
+        <p>{item.notes}</p><Button variant="quiet" disabled={remove.isPending} onClick={() => remove.mutate(item.id)}
+          aria-label={"Remove " + item.title}>Remove</Button></li>)}</ul>}
+    {offset > 0 && <Button variant="quiet" onClick={() => setOffset(offset - catalogPageSize)}>Previous listings</Button>}
+    {listing.data?.length === catalogPageSize && <LoadMore busy={listing.isFetching} loading={false} onClick={() => setOffset(offset + catalogPageSize)} />}
   </div>;
 }

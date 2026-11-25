@@ -251,7 +251,7 @@ Tap **Scan device**, paste the original seller link, and follow consent, optiona
 | Hosted PostgreSQL | Set `DATABASE_URL` for an isolated, compatible database or schema with the appropriate PostgreSQL role. Apply migrations before switching the API and worker to that database. Authentication and database hosting can be configured independently. |
 | Moonshot listing assistance | In the API environment, set `KIMI_API_KEY`, an HTTPS `KIMI_BASE_URL`, and a `KIMI_MODEL` that supports JSON responses. Restart the API and use the listing suggestion action from an authenticated account. The manual claims flow works without this integration. `KIMI_VISION_MODEL` is reserved; image checks currently use local OpenCV. [Agent and model integration](docs/architecture/agent.md) |
 | Comparable pricing | Set `PRICING_COMPARABLES_FILE` to a JSON file available to the API process. Each saved sale needs `device`, `currency`, `amount`, `sold_on`, and a unique `reference`. Matching pricing requires at least three recent, distinct sales in one currency. For a container deployment, mount the file and use its container path. [Comparable pricing format](docs/development/setup.md#comparable-pricing) |
-| Buyer chat and guided scan | Open `/advisor` to ask about your shared reports or include saved listings. The Expo scanner supports approval-gated collection and fixed alternate readers. The operator dashboard shows aggregate usage. [Agent setup and architecture](docs/architecture/agent.md) |
+| Buyer chat and guided scan | Open `/advisor` to ask about ProofScan, compare your shared reports, or look up public prices and specifications. The Expo scanner supports approval-gated collection and fixed alternate readers. The operator dashboard shows aggregate usage. [Agent setup and architecture](docs/architecture/agent.md) |
 
 Processed exterior photos currently live in PostgreSQL. See [implementation status](docs/status.md) for hosted object storage, mobile attestation, and other integrations awaiting implementation or live verification.
 
@@ -347,7 +347,7 @@ The [environment template](.env.example) lists server and app values. Server var
 | `EVIDENCE_RETENTION_DAYS` | Evidence lifetime in days. Defaults to 30 and accepts 1 through 365. |
 | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` | Project settings for the optional Supabase Auth integration |
 | `KIMI_API_KEY`, `KIMI_BASE_URL`, `KIMI_MODEL`, `KIMI_VISION_MODEL` | Moonshot listing-assistance configuration and the reserved vision model setting |
-| `AGENT_MODEL`, `AGENT_TEST_MODEL` | Provider model for the agent and a separate model for synthetic probes |
+| `AGENT_MODEL`, `AGENT_TEST_MODEL`, `AGENT_REVIEW_MODEL` | Models for agent decisions, synthetic probes, and the optional second-pass Buyer Chat review |
 | `AGENT_VECTOR_ENABLED`, `AGENT_EMBEDDING_CACHE` | Enable PostgreSQL semantic retrieval and set the local model cache path |
 | `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Optional server-side metadata tracing |
 | `PROOFSCAN_POSTGRES_IMAGE`, `PROOFSCAN_INSTALL_AGENT` | Compose PostgreSQL image override and optional API image dependencies |

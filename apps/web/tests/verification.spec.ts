@@ -164,8 +164,8 @@ test("a real Windows collector ticket reaches a signed buyer report", async ({ p
     await buyer.getByRole("button", { name: "Create pickup recheck link" }).click();
     await expect(buyer.getByLabel("Private pickup link")).toBeVisible();
     await buyer.goto("/advisor");
-    await buyer.getByLabel("What are you looking for?").fill("Compare my verified devices by memory.");
-    await buyer.getByRole("button", { name: "Get a recommendation" }).click();
+    await buyer.getByLabel("Ask ProofScan").fill("Compare my verified devices by memory.");
+    await buyer.getByRole("button", { name: "Send message" }).click();
     await expect(buyer.getByRole("link", { name: "Open signed report" })).toBeVisible();
   } finally {
     await context.close();

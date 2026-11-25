@@ -1,17 +1,23 @@
 # ProofScan agents
 
-**Buyer chat** compares the signed reports shared with a buyer and can include that buyer’s saved listings. **Guided scan** selects approved local device checks in Expo. The verification service controls consent, report sharing, and signatures.
+**Buyer chat** answers questions about ProofScan, compares signed reports shared with a buyer and looks up prices and specifications for supported devices. **Guided scan** selects approved local device checks in Expo. The verification service controls consent, report sharing, and signatures.
 
 ```mermaid
 flowchart LR
     Web[Buyer chat in web and app] --> API[FastAPI]
     Mobile[Expo guided scan] --> API
-    API --> Graph[LangGraph tool loop]
-    Graph --> Catalog[(Owner-scoped PostgreSQL and pgvector)]
+    API --> Router[Buyer chat request policy]
+    Router --> Catalog[(Owner-scoped PostgreSQL and pgvector)]
+    Router --> Guides[Curated ProofScan guides]
+    Router --> Search[Moonshot public device search]
+    Catalog --> Review[Answer verification]
+    Guides --> Review
+    Search --> Review
+    Review --> Web
     API --> Plan[(Device approval and checkpoint)]
     Plan --> Mobile
     Mobile --> Readers[Read-only native device tools]
-    Graph -->|Approved structured facts| Kimi[Moonshot Kimi]
+    Review -->|Optional public evidence selection and second decision| Kimi[Moonshot Kimi]
     API --> Usage[(Daily usage totals)]
     Usage --> Ops[ProofScan operator dashboard]
     API -->|Tool outcomes only| Kimi
@@ -21,26 +27,21 @@ flowchart LR
 ## Buyer chat
 
 1. Open **Buyer chat** in the web or app workspace and sign in. The default pool is the signed reports sellers shared with your account.
-2. Ask a question such as “Which of these phones has the healthiest battery?” Choose a category and, if relevant, a budget and currency. If you want to include your own listings, select **Include saved listings**.
-3. Open the cited reports to review the measurements and exterior evidence. Local ranking can order results by measured battery health, memory or storage and calls out missing measurements. A follow-up can refine the last question. The transcript stays in the current client session.
-4. Opt into Moonshot for structured comparison. Local ranking is available by default.
+2. Type a question such as “How do I recheck a device at pickup?”, “Which of my phones has the healthiest battery?” or “What does an iPhone 15 Pro cost in India?” Enter sends and Shift+Enter inserts a line break. Chat settings control the default market, public search, saved listings, and the optional model review.
+3. Open a cited report, ProofScan guide or retailer source to check the evidence. The app can pass up to four recent user turns to resolve follow-ups such as “What about in the UK?” The conversation stays in the current window. **New chat** clears it, and the server stores no transcript.
+4. Public search supports selected iPhone, Galaxy, Pixel, OnePlus, Xiaomi, Redmi, Poco, MacBook and ThinkPad models. It uses a retailer allowlist for India, the United States and the United Kingdom. The search timestamp records when ProofScan looked up the listing. Confirm the current checkout price, configuration and availability at the source.
 
 Sharing creates the searchable report entry in the same database transaction. Existing valid shared reports are backfilled in batches when their owner first uses chat. Pending, declined, simulated and invalidated reports are excluded. Invalidating a report removes the entry and its vector. Budget filtering uses the upper bound of a stored comparable price estimate when available. Inspect the source report for the full estimate or an explanation of missing data.
 
-The automatic index contains a scrubbed manufacturer and model, the device category, measured RAM, storage and battery health when available, claim mismatch and photo counts, and any supported price estimate. It excludes the report label and notes, identifiers, images, and guest links. Moonshot receives predefined preference labels and structured comparison facts after opt-in. Free-text questions, listing text, private URLs and photos stay inside ProofScan. The private report remains governed by the buyer’s existing account authorization.
+The automatic index contains a scrubbed manufacturer and model, the device category, measured RAM, storage and battery health when available, claim mismatch and photo counts, and any supported price estimate. It excludes the report label and notes, identifiers, images, and guest links. Buyer Chat uses the signed-in owner from the session and rechecks citation ownership before rendering. Free-text questions, listing text, private URLs, photos and reports stay inside ProofScan.
 
 ### Reasoning, actions, and safeguards
 
-The LangGraph ReAct loop alternates between a typed decision and a tool observation. K3 returns a decision through a required function call. The graph supports the following actions.
+The scope gate selects a ProofScan guide, an owner-scoped report comparison, or public device research. It declines unrelated and restricted requests before any lookup. The search client constructs its query from a recognized model and market. It limits time, response size and domains, strips URL tracking data, checks model variants, and only displays an extracted price if it identifies a single local-currency amount. Retailer snippets are untrusted input. ProofScan extracts bounded fields and discards the raw text before building an answer.
 
-| Action | Application policy |
-| --- | --- |
-| `search_catalog` | The application always runs it first. PostgreSQL binds the signed-in owner, evidence source, device category, currency, and budget before ranking. |
-| `compare_candidates` | Compares records already retrieved within the current request. |
-| `recommend` | Accepts only candidate numbers from the current retrieval. ProofScan writes the explanation from the recorded measurements and applies deterministic numeric ranking for a requested measurement. |
-| `clarify` | Offers a fixed prompt for the user to identify a priority. |
+Every response uses application-owned copy and validated evidence. With optional model review on, a first Moonshot call selects evidence IDs from curated product facts or bounded public search facts. A separate reviewer call can remove IDs. The application intersects the review with the original selection and directs an empty review to a clarification. If either provider call fails, the application can use its independently validated evidence. Private comparisons use the local verifier throughout. [OWASP prompt injection guidance](https://genai.owasp.org/llm2026/llm012026-prompt-injection/) · [OWASP output handling guidance](https://genai.owasp.org/llm2026/llm102026-improper-output-handling/)
 
-The provider boundary enforces explicit approval, a ten-second timeout per call, a 24-second decision window, and output limits. Buyer Chat can make up to two model calls after it retrieves evidence, to compare or select candidates. Unsupported actions, invalid source references, and provider errors use deterministic fallback behavior. A PostgreSQL quota reservation is committed before contacting Moonshot. Execution records contain status and tool metadata. The hourly worker clears older execution records.
+The compatibility endpoint `/agent/ask` retains the existing LangGraph ReAct recommendation loop and its structured comparison contract. Both routes reserve a shared daily quota before provider work. Execution records contain status and tool metadata. The hourly worker clears older execution records.
 
 Text mode uses PostgreSQL lexical ranking. Semantic mode stores 384-dimensional FastEmbed vectors in pgvector. It filters eligible records before exact cosine similarity and combines that score with a lexical signal. New report vectors are built locally during retrieval in bounded batches. The reindex command also fills missing vectors. [pgvector filtering and exact search](https://github.com/pgvector/pgvector#filtering) · [FastEmbed model list](https://qdrant.github.io/fastembed/examples/Supported_Models/)
 
@@ -67,6 +68,8 @@ Run `uv sync --locked --python 3.12 --no-install-project` and `uv run --no-sync 
 
 Put `KIMI_API_KEY` in the ignored server environment. The default provider origin is `https://api.moonshot.ai/v1`. `AGENT_MODEL` defaults to `kimi-k3` with low reasoning effort. `AGENT_TEST_MODEL` defaults to `kimi-k2.6` for a small synthetic test. K2.6 needs access on your account and can be overridden when K2 is retired. The existing listing extraction endpoint uses `KIMI_MODEL`. [Kimi model list](https://platform.kimi.ai/docs/models) · [Kimi pricing and availability](https://platform.kimi.ai/docs/pricing/chat)
 
+Public device research requires Moonshot Web Search Basic access on the configured key. Search is billed by the provider and uses at most two searches per message. Set `AGENT_REVIEW_MODEL` to choose the separate reviewer model. It defaults to `kimi-k2.6`. Chat can use guides and private reports when public search is unavailable. [Kimi Web Search guide](https://platform.kimi.ai/docs/guide/best-practices-for-web-search)
+
 Set `PYTHONPATH=apps/api` in the process. In PowerShell use `$env:PYTHONPATH = "apps/api"`. Run the cheap synthetic probe, or add `--production` to test `AGENT_MODEL`.
 
 ```sh
@@ -85,7 +88,7 @@ uv run --no-sync python -m proofscan.agent warm
 uv run --no-sync python -m proofscan.agent reindex
 ```
 
-The last two commands need `PYTHONPATH=apps/api`. `warm` caches the public `BAAI/bge-small-en-v1.5` embedding model in `AGENT_EMBEDDING_CACHE` and runs a synthetic inference. `reindex` backfills existing catalog entries. Set `AGENT_VECTOR_ENABLED=true` and restart the API. If the model or vector table is unavailable, Buyer Chat uses text ranking with the same access and budget filters. The response reports the ranking mode used.
+The last two commands need `PYTHONPATH=apps/api`. `warm` caches the public `BAAI/bge-small-en-v1.5` embedding model in `AGENT_EMBEDDING_CACHE` and runs a synthetic inference. `reindex` backfills existing catalog entries. Set `AGENT_VECTOR_ENABLED=true` and restart the API. If the model or vector table is unavailable, Buyer Chat uses text ranking with the same access and budget filters. Execution metadata records the ranking mode.
 
 ### Semantic retrieval with Compose
 
@@ -112,7 +115,8 @@ Telemetry carries execution ID, model, token counts, tool, outcome, and duration
 | `GET /api/v1/agent/catalog` | List private catalog entries, 30 per page using `offset`. |
 | `POST /api/v1/agent/catalog` | Add an owned catalog entry and its vector when enabled. |
 | `DELETE /api/v1/agent/catalog/{id}` | Remove an owned entry and its vector. |
-| `POST /api/v1/agent/ask` | Ask with an optional budget, report-only filter, previous question and explicit model permission. |
+| `POST /api/v1/agent/chat` | Send a free-text message with optional recent user turns and search settings. Returns a checked answer, status and citations. |
+| `POST /api/v1/agent/ask` | Compatibility route for structured catalog recommendations with an optional budget, report-only filter and previous question. |
 | `GET /api/v1/admin/agent-usage` | Read 30 UTC days of aggregate usage as an operator. |
 | `POST /api/v1/verifications/{verification_id}/recheck` | Create an owner-only private pickup check from a valid device report. |
 | `POST /api/v1/guest/{verification_id}/agent/plan` | Pause for approval on an active mobile scan. |

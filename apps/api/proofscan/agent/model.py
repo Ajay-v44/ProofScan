@@ -49,6 +49,7 @@ async def decide[T: BaseModel](
     *,
     approved: bool,
     model: str | None = None,
+    operation: str = "decide",
 ) -> T | None:
     config = settings()
     timeout = model_timeout(trace, approved=approved)
@@ -98,7 +99,7 @@ async def decide[T: BaseModel](
     finally:
         trace.events.append(
             Event(
-                "decide",
+                operation,
                 outcome,
                 round((perf_counter() - started) * 1000),
                 model_id,
