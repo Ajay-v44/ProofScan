@@ -2,7 +2,7 @@ name: ProofScan checks
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, production]
 permissions:
   contents: read
 jobs:
@@ -57,10 +57,17 @@ jobs:
       - run: npm run build -w @proofscan/web
       - run: npx playwright install --with-deps chromium
       - run: |
-          uv run --no-sync uvicorn proofscan.main:app --host 127.0.0.1 --port 8000 > /tmp/proofscan-api.log 2>&1 &
           cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/
           cp -r apps/web/public apps/web/.next/standalone/apps/web/
+          .venv/bin/python -m uvicorn proofscan.main:app --host 127.0.0.1 --port 8000 > /tmp/proofscan-api.log 2>&1 &
+          api_pid=$!
           HOSTNAME=127.0.0.1 node apps/web/.next/standalone/apps/web/server.js > /tmp/proofscan-web.log 2>&1 &
+          web_pid=$!
+          cleanup() {
+            kill "$api_pid" "$web_pid" 2>/dev/null || true
+            wait "$api_pid" "$web_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
           curl --silent --fail --retry 15 --retry-connrefused http://127.0.0.1:8000/health
           curl --silent --fail --retry 15 --retry-connrefused http://localhost:3000/ > /dev/null
           npm run e2e -w @proofscan/web

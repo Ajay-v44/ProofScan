@@ -4,6 +4,8 @@ ProofScan helps buyers verify claims about a used device. A buyer creates a priv
 
 ProofScan also records asset handoffs. Owners capture a baseline, can request receiver acknowledgment, and record the return to generate a signed comparison. Generic items use notes and photos. Windows handoffs can additionally compare hardware readings.
 
+For the GeeksforGeeks × OpenAI challenge, see the [Codex evidence pack](docs/hackathon/codex-evidence-pack.md) and the [runnable demo guide](docs/hackathon/run-proofscan.md).
+
 ## Contents
 
 - [Services and ports](#services-and-ports)
