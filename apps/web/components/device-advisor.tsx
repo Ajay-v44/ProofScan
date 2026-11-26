@@ -1,6 +1,6 @@
 "use client";
 
-import { api, apiDelete, ApiError, type BuyerChatAnswer, type CatalogItem } from "@proofscan/api-client";
+import { api, apiDelete, ApiError, type BuyerChatAnswer, type BuyerChatPrice, type CatalogItem } from "@proofscan/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, MessageSquare, Plus, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
@@ -40,6 +40,7 @@ export function DeviceAdvisor() {
 function Answer({ value }: { value: BuyerChatAnswer }) {
   return <div className="buyer-chat-answer">
     {value.message.split("\n\n").map((part, index) => <p key={index}>{part}</p>)}
+    {value.pricing?.map(price => <PriceEvidence key={price.device} price={price} />)}
     {!!value.sources.length && <div className="buyer-chat-citations">
       <h3>Sources</h3>
       <ul>{value.sources.map((source, index) => <li key={`${source.kind}-${index}`}>
@@ -54,7 +55,42 @@ function Answer({ value }: { value: BuyerChatAnswer }) {
   </div>;
 }
 
-function PublicSource({ href }: { href: string }) {
+function PriceEvidence({ price }: { price: BuyerChatPrice }) {
+  const { current, launch } = price;
+  const locale = { IN: "en-IN", GB: "en-GB", US: "en-US" }[price.market];
+  const formatter = new Intl.NumberFormat(locale, { style: "currency", currency: price.currency, minimumFractionDigits: 0 });
+  const amount = (minor: number) => formatter.format(minor / 100);
+  const age = launch ? new Date().getUTCFullYear() - launch.year : 0;
+  const percent = current && launch && current.storage_gb === launch.storage_gb
+    ? Math.round(current.median_minor / launch.price_minor * 100)
+    : null;
+
+  if (!current && !launch) return null;
+  return <section className="buyer-chat-price" aria-label={`Pricing for ${price.device}`}>
+    <h3>{price.device} <span>{markets[price.market]}</span></h3>
+    <dl>
+      <div>
+        <dt>Current asking-price estimate</dt>
+        <dd>{current ? <>
+          <strong>{amount(current.low_minor)}–{amount(current.high_minor)}</strong>
+          <p>Median {amount(current.median_minor)} · {current.storage_gb} GB · {current.condition}</p>
+          <p>Based on {current.merchant_count} retailers’ indexed listings.</p>
+        </> : "Too few comparable listings"}</dd>
+      </div>
+      <div>
+        <dt>Manufacturer launch price</dt>
+        <dd>{launch ? <>
+          <strong>{amount(launch.price_minor)}</strong>
+          <p>{launch.year} starting price{launch.storage_gb ? ` · ${launch.storage_gb} GB` : ""}{age > 0 ? ` · about ${age} ${age === 1 ? "year" : "years"} ago` : ""}</p>
+          <PublicSource href={launch.href} label="Read the launch announcement" />
+        </> : "No verified launch price"}</dd>
+      </div>
+    </dl>
+    {percent !== null && <p>Current median asking price is {percent}% of the launch price for the same storage.</p>}
+  </section>;
+}
+
+function PublicSource({ href, label = "Open public source" }: { href: string; label?: string }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "show-link">("idle");
 
   async function copyLink() {
@@ -67,7 +103,7 @@ function PublicSource({ href }: { href: string }) {
   }
 
   return <div className="buyer-chat-source-links">
-    <a className="quiet-link" href={href} target="_blank" rel="noreferrer noopener">Open public source</a>
+    <a className="quiet-link" href={href} target="_blank" rel="noreferrer noopener">{label}</a>
     <Button variant="quiet" onClick={() => void copyLink()}>Copy link</Button>
     {copyState === "copied" && <span role="status">Link copied</span>}
     {copyState === "show-link" && <input aria-label="Public source address" readOnly value={href} onFocus={event => event.currentTarget.select()} />}

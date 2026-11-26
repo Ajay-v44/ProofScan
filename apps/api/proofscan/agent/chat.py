@@ -14,9 +14,10 @@ from ..schemas import Input
 from .catalog import CatalogSearch, requested_measurement
 from .guardrails import device_models, device_title, normalized, sensitive_request
 from .knowledge import Guide, find_guides
-from .market import MARKETS, search_market
+from .market import MARKETS, SearchFact, quote_condition, search_market, storage_values
 from .model import decide
-from .schemas import ChatRequest, ChatResponse, ChatSource, Market, Question
+from .pricing_skill import lookup_launch, price_assessment
+from .schemas import ChatRequest, ChatResponse, ChatSource, LaunchPrice, Market, Question, QuoteCondition
 from .telemetry import AgentTrace, Event
 
 REFUSAL = "I can help with ProofScan, your shared reports, device buying, and handoffs. Try a question about one of those."
@@ -24,7 +25,7 @@ PRIVATE = re.compile(
     r"\b(?:my|our) (?:reports?|devices?|listings?|phones?|tablets?|laptops?|catalog)\b|\b(?:shared with me|verified devices|my shortlist)\b"
 )
 PRICE = re.compile(
-    r"\b(?:pric(?:e|es|ing)|costs?|worth|market value|how much|best deal|retail|resale)\b"
+    r"\b(?:pric(?:e|es|ing)|costs?|worth|market value|fair value|how much|best deal|retail|resale|msrp|launch date|launch year|release year|released|launched|sell for)\b"
 )
 RESEARCH = re.compile(
     r"\b(?:search|look up|specs?|specifications?|display|camera|processor|ram|storage|battery|refresh rate|compare|review|good|describe|tell me about|what do you think)\b"
@@ -40,6 +41,14 @@ SHOPPING = re.compile(
 )
 LOWEST = re.compile(r"\b(?:lowest|least|worst|weakest|smallest|fewest|less)\b")
 HIGHEST = re.compile(r"\b(?:highest|most|best|strongest|largest|more|healthiest)\b")
+MARKET_NAMES: tuple[tuple[Market, re.Pattern[str]], ...] = (
+    ("US", re.compile(r"\b(?:united states|usa|usd|in the us|in us)\b")),
+    ("GB", re.compile(r"\b(?:united kingdom|uk|gbp|britain)\b")),
+    ("IN", re.compile(r"\b(?:india|inr)\b")),
+)
+UNSUPPORTED_MARKET = re.compile(
+    r"€|\b(?:cad|aud|eur|aed|sgd|jpy|nzd)\b|\b(?:in|for) (?:canada|australia|new zealand|europe|eu|united arab emirates|uae|singapore|japan|germany|france)\b"
+)
 
 Intent = Literal["help", "catalog", "market", "specs", "outside"]
 
@@ -59,6 +68,7 @@ class Evidence:
     source: ChatSource
     sentence: str
     catalog_id: UUID | None = None
+    quote: SearchFact | None = None
 
 
 class Selection(Input):
@@ -66,13 +76,10 @@ class Selection(Input):
 
 
 def requested_market(text: str, fallback: Market) -> Market:
-    if "$" in text or re.search(r"\b(?:united states|usa|usd|in the us)\b", text):
-        return "US"
-    if "£" in text or re.search(r"\b(?:united kingdom|uk|gbp|britain)\b", text):
-        return "GB"
-    if "₹" in text or re.search(r"\b(?:india|inr)\b", text):
-        return "IN"
-    return fallback
+    for market, pattern in MARKET_NAMES:
+        if pattern.search(text):
+            return market
+    return "IN" if "₹" in text else "GB" if "£" in text else "US" if "$" in text else fallback
 
 
 def make_plan(data: ChatRequest) -> Plan:
@@ -232,10 +239,26 @@ async def catalog_evidence(
     return records, summary
 
 
-async def web_evidence(plan: Plan, trace: AgentTrace) -> tuple[list[Evidence], bool]:
+def pricing_options(plan: Plan) -> tuple[int | None, QuoteCondition | None]:
+    sizes = storage_values(plan.question) or storage_values(plan.history)
+    condition = quote_condition(plan.question) or quote_condition(plan.history)
+    return (sizes.pop() if len(sizes) == 1 else None), condition
+
+
+async def web_evidence(
+    plan: Plan, trace: AgentTrace
+) -> tuple[list[Evidence], bool, dict[str, LaunchPrice | None]]:
     started = perf_counter()
-    answers = await asyncio.gather(
-        *(search_market(device, plan.market, pricing=plan.intent == "market") for device in plan.models)
+    pricing = plan.intent == "market"
+    size, condition = pricing_options(plan) if pricing else (None, None)
+    answers, launches = await asyncio.gather(
+        asyncio.gather(
+            *(
+                search_market(device, plan.market, pricing=pricing, storage_gb=size, condition=condition)
+                for device in plan.models
+            )
+        ),
+        asyncio.gather(*(lookup_launch(device, plan.market) for device in plan.models if pricing)),
     )
     records = [
         Evidence(
@@ -247,6 +270,7 @@ async def web_evidence(plan: Plan, trace: AgentTrace) -> tuple[list[Evidence], b
                 detail=fact.detail,
             ),
             "",
+            quote=fact if pricing else None,
         )
         for results in answers
         if results
@@ -263,7 +287,11 @@ async def web_evidence(plan: Plan, trace: AgentTrace) -> tuple[list[Evidence], b
             round((perf_counter() - started) * 1000),
         )
     )
-    return records, all(answer is None for answer in answers)
+    return (
+        records,
+        all(answer is None for answer in answers),
+        dict(zip(plan.models, launches, strict=pricing)),
+    )
 
 
 async def review(
@@ -336,6 +364,7 @@ async def build_chat(
         return ChatResponse(status="outside_domain", message=REFUSAL)
 
     checked = None
+    launches: dict[str, LaunchPrice | None] = {}
     if plan.intent == "help":
         evidence = help_evidence(find_guides(plan.question) or find_guides(plan.history))
         summary = ""
@@ -352,26 +381,39 @@ async def build_chat(
                 status="needs_input",
                 message="Which device should I look up? Include the exact model and variant, such as iPhone 15 Pro or Galaxy S24 Ultra. I’ll use the market selected in your chat settings unless you name another one.",
             )
+        if plan.intent == "market" and len(storage_values(plan.question)) > 1:
+            return ChatResponse(
+                status="needs_input",
+                message="Which storage capacity should I price first? Each estimate compares listings with the same storage.",
+            )
+        if (
+            UNSUPPORTED_MARKET.search(plan.question)
+            or sum(bool(pattern.search(plan.question)) for _, pattern in MARKET_NAMES) > 1
+        ):
+            return ChatResponse(
+                status="needs_input",
+                message="Which market should I check? Public device research supports India, the United States, and the United Kingdom, one market per question.",
+            )
         if not data.allow_web:
             return ChatResponse(
                 status="needs_input",
                 message="Enable public web search in chat settings to look up prices or specifications. You can still ask about your shared reports and ProofScan.",
             )
-        evidence, unavailable = await web_evidence(plan, trace)
-        if unavailable:
+        evidence, unavailable, launches = await web_evidence(plan, trace)
+        if unavailable and not any(launches.values()):
             return ChatResponse(
                 status="unavailable",
                 message="Public search is temporarily unavailable. I can still help compare your shared reports or explain what to verify before buying.",
             )
-        checked = now().isoformat()
+        checked = None if unavailable else now().isoformat()
         country = MARKETS[plan.market][0]
         if plan.intent == "market":
-            summary = f"Here are public listings in {country}. Prices shown come from indexed listing text. Open each listing to confirm the current price, storage variant, condition, and availability."
+            summary = f"Here’s the pricing evidence I could verify for {country}. Retailer prices come from indexed listings. Check the listing for the current price, condition, and availability."
         else:
             summary = f"Here are published device details for {country}. Open the sources to confirm the exact configuration."
 
     verified = await review(evidence, plan, data, trace)
-    if not verified:
+    if not verified and not any(launches.values()):
         return ChatResponse(
             status="needs_input",
             message="I couldn’t verify a matching source for this question. Try a more specific device model or ask about the readings available in your reports.",
@@ -382,9 +424,23 @@ async def build_chat(
             status="needs_input",
             message="The available reports changed during this comparison. Ask again for the latest evidence.",
         )
+    pricing = []
+    if plan.intent == "market":
+        size, condition = pricing_options(plan)
+        quotes = [item.quote for item in verified if item.quote is not None]
+        pricing = [
+            price_assessment(device, plan.market, quotes, launches.get(device), size, condition)
+            for device in plan.models
+        ]
+        if not any(assessment.current for assessment in pricing):
+            summary += "\n\nI couldn’t verify enough comparable listings to give a current price range."
+        trace.events.append(
+            Event("price_assessment", "range" if any(p.current for p in pricing) else "insufficient", 0)
+        )
     return ChatResponse(
         status="answer",
         message="\n\n".join(item.sentence for item in verified) if plan.intent == "help" else summary,
         sources=[item.source for item in verified],
         checked_at=checked,
+        pricing=pricing,
     )

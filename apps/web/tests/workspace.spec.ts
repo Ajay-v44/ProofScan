@@ -92,6 +92,31 @@ test("buyer chat handles free text, citations, scope and a new conversation", as
   await expect(page.getByRole("log")).not.toContainText("Saved listing 1");
 });
 
+test("buyer chat distinguishes market asking prices from the launch price on a phone", async ({ page }) => {
+  const account = await page.request.post("/api/v1/auth/register", {
+    data: { email: "pricing-" + randomUUID() + "@example.test", password: "Fixture-" + randomUUID() },
+  });
+  expect(account.ok()).toBeTruthy();
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.route("**/api/v1/agent/chat", route => route.fulfill({ json: {
+    status: "answer", message: "Here is the pricing evidence for India.", sources: [],
+    checked_at: "2026-11-25T00:00:00Z",
+    pricing: [{ device: "iPhone 15 Pro", market: "IN", currency: "INR",
+      launch: { year: 2023, price_minor: 13490000, storage_gb: 128, href: "https://www.apple.com/in/newsroom/2023/09/apple-unveils-iphone-15-pro-and-iphone-15-pro-max/" },
+      current: { low_minor: 4999900, high_minor: 5200100, median_minor: 5100000, storage_gb: 128, condition: "refurbished", merchant_count: 2 },
+    }],
+  } }));
+  await page.goto("/advisor");
+  await page.getByLabel("Ask ProofScan").fill("How much is a refurbished iPhone 15 Pro worth?");
+  await page.getByRole("button", { name: "Send message" }).click();
+  const pricing = page.getByRole("region", { name: "Pricing for iPhone 15 Pro" });
+  await expect(pricing.getByText("Current asking-price estimate")).toBeVisible();
+  await expect(pricing.getByText("Manufacturer launch price")).toBeVisible();
+  await expect(pricing.getByText("Based on 2 retailers’ indexed listings.")).toBeVisible();
+  await expect(pricing.getByRole("link", {name: "Read the launch announcement"})).toHaveAttribute("href", /^https:\/\/www\.apple\.com\//);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+});
+
 test("workspace navigation and product information reflow across screen sizes", async ({ page }) => {
   await page.goto("/workspace");
   for (const width of [320, 390, 768, 1024, 1440]) {

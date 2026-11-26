@@ -89,6 +89,38 @@
   gap: 10px;
 }
 
+.buyer-chat-price {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--ps-control);
+  background: var(--canvas);
+}
+
+.buyer-chat-price h3 span {
+  margin-inline-start: 6px;
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+.buyer-chat-price dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.buyer-chat-price dt,
+.buyer-chat-price p {
+  color: var(--muted);
+  font-size: .85rem;
+}
+
+.buyer-chat-price dd {
+  margin: 2px 0 0;
+}
+
 .buyer-chat-citations {
   display: grid;
   gap: 7px;

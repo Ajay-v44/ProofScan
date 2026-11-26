@@ -66,7 +66,7 @@ def test_retailer_evidence_requires_exact_variant_and_unambiguous_price():
         "https://www.cashify.in/apple-iphone-15-pro",
         "https://www.cashify.in/monthly",
     ]
-    assert facts[0].detail == "INR 49,999 · refurbished"
+    assert facts[0].detail == "INR 49,999 · refurbished · 128 GB"
     assert facts[1].detail == "Open listing for price and availability"
     assert "marker" not in str(facts)
 

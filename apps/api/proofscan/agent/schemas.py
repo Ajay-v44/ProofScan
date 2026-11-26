@@ -80,6 +80,7 @@ class Recommendation(BaseModel):
 
 ChatText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
 Market = Literal["IN", "US", "GB"]
+QuoteCondition = Literal["used", "refurbished", "new"]
 
 
 class ChatRequest(Input):
@@ -98,11 +99,36 @@ class ChatSource(BaseModel):
     detail: str | None = None
 
 
+class LaunchPrice(BaseModel):
+    year: int
+    price_minor: int
+    storage_gb: int | None = None
+    href: str
+
+
+class MarketRange(BaseModel):
+    low_minor: int
+    high_minor: int
+    median_minor: int
+    storage_gb: int
+    condition: QuoteCondition
+    merchant_count: int
+
+
+class PriceAssessment(BaseModel):
+    device: str
+    market: Market
+    currency: str
+    launch: LaunchPrice | None = None
+    current: MarketRange | None = None
+
+
 class ChatResponse(BaseModel):
     status: Literal["answer", "needs_input", "outside_domain", "unavailable"]
     message: str
     sources: list[ChatSource] = Field(default_factory=list)
     checked_at: str | None = None
+    pricing: list[PriceAssessment] = Field(default_factory=list)
 
 
 DeviceTool = Literal["model_name", "model_identifier", "memory_total"]

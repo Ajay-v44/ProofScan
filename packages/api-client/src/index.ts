@@ -70,11 +70,22 @@ export type AdvisorResult = {
   status: "answer" | "needs_input" | "no_evidence"; message: string; sources: CatalogItem[];
   tools: ("search_catalog" | "compare_candidates")[]; retrieval: "lexical" | "pgvector"; model_used: boolean;
 };
+export type BuyerChatPrice = {
+  device: string;
+  market: "IN" | "US" | "GB";
+  currency: string;
+  launch: { year: number; price_minor: number; storage_gb: number | null; href: string } | null;
+  current: {
+    low_minor: number; high_minor: number; median_minor: number; storage_gb: number;
+    condition: "used" | "refurbished" | "new"; merchant_count: number;
+  } | null;
+};
 export type BuyerChatAnswer = {
   status: "answer" | "needs_input" | "outside_domain" | "unavailable";
   message: string;
   sources: { kind: "help" | "report" | "listing" | "web"; title: string; href: string | null; detail: string | null }[];
   checked_at: string | null;
+  pricing?: BuyerChatPrice[];
 };
 export type DeviceTool = "model_name" | "model_identifier" | "memory_total";
 export type ToolOutcome = "ok" | "unavailable" | "error";
