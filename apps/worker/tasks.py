@@ -6,6 +6,7 @@ from celery import Celery
 from sqlalchemy import SQLColumnExpression, Update, delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from proofscan.account_deletion import finish_hosted_deletions
 from proofscan.agent.models import AgentExecution
 from proofscan.config import settings
 from proofscan.db import CaptureLink, Evidence, Verification, database, now
@@ -39,6 +40,11 @@ celery.conf.update(
             "task": "proofscan.expire_agent_executions",
             "schedule": 3600.0,
             "options": {"expires": 3600},
+        },
+        "finish-account-deletions": {
+            "task": "proofscan.finish_account_deletions",
+            "schedule": 60.0,
+            "options": {"expires": 60},
         },
     },
 )
@@ -168,3 +174,15 @@ async def purge_agent_executions() -> int:
 @celery.task(name="proofscan.expire_agent_executions", soft_time_limit=25, time_limit=30)
 def expire_agent_executions() -> int:
     return asyncio.run(purge_agent_executions())
+
+
+@celery.task(name="proofscan.finish_account_deletions", soft_time_limit=25, time_limit=30)
+def finish_account_deletions() -> int:
+    async def run() -> int:
+        engine = database()
+        try:
+            return await finish_hosted_deletions(engine)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(run())

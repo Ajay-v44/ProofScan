@@ -3,7 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import delete, select, update
+from sqlalchemy import String, cast, delete, or_, select, update
 
 from .agent.report_index import index_shared_report
 from .auth import DB, Owner, set_cookie
@@ -133,8 +133,16 @@ async def verifications(
     db: DB,
     offset: Annotated[int, Query(ge=0)] = 0,
     before: UUID | None = None,
+    q: Annotated[str | None, Query(max_length=120)] = None,
 ) -> list[VerificationView]:
     page = select(Verification).where(Verification.owner_id == owner)
+    if q and (term := q.strip()):
+        page = page.where(
+            or_(
+                Verification.label.icontains(term, autoescape=True),
+                cast(Verification.id, String).icontains(term, autoescape=True),
+            )
+        )
     if before is not None:
         page = page.where(before_record(Verification, owner, before))
     rows = await db.scalars(

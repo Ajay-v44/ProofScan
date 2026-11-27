@@ -39,7 +39,8 @@ export function BuyerReport({ id }: { id: string }) {
         {report.data.baseline_valid === false && <p className="notice warning">The original report is no longer valid. Review the new scan on its own.</p>}
         <p>{pickup.changed_hardware.length
           ? "Hardware differences to inspect: " + pickup.changed_hardware.join(", ")
-          : "No differences in the hardware fields available in both reports."}</p>
+          : pickup.compared_hardware.length ? "No differences in the fields checked." : "No hardware fields were recorded as compared."}</p>
+        {!!pickup.compared_hardware.length && <p>Fields checked include {pickup.compared_hardware.join(", ")}.</p>}
         <div className="comparison-views">{pickup.visuals.map(view => {
           const before = baseline.data?.payload.visual_evidence?.find(photo => photo.angle === view.angle);
           const after = payload?.visual_evidence?.find(photo => photo.angle === view.angle);

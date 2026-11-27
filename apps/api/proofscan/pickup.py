@@ -15,6 +15,10 @@ REQUIRED_VIEWS: tuple[Angle, ...] = ("front", "back")
 VIEWS: tuple[Angle, ...] = (*REQUIRED_VIEWS, "left", "right")
 
 
+def component_names(names: list[str]) -> tuple[str, ...] | None:
+    return tuple(sorted(" ".join(name.casefold().split()) for name in names)) or None
+
+
 async def valid_baseline(db: AsyncSession, owner: UUID, report_id: UUID) -> ReportPayload:
     row = (
         await db.execute(
@@ -50,6 +54,8 @@ async def compare_pickup(
         "Manufacturer": (before.manufacturer, after.manufacturer),
         "Model": (before.model, after.model),
         "Memory": (before.memory_gib, after.memory_gib),
+        "Processor": (component_names(before.cpu), component_names(after.cpu)),
+        "Graphics": (component_names(before.gpu), component_names(after.gpu)),
         "Largest drive capacity": (
             max((item.capacity_gb for item in before.drives), default=None),
             max((item.capacity_gb for item in after.drives), default=None),

@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     enable_simulator: bool = False
     supabase_url: str = ""
     supabase_publishable_key: SecretStr | None = None
+    supabase_secret_key: SecretStr | None = None
     admin_subjects: set[UUID] = Field(default_factory=set)
     evidence_retention_days: int = Field(default=30, ge=1, le=365)
     kimi_api_key: SecretStr | None = None
@@ -61,6 +62,8 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Production requires an HTTPS WEB_ORIGIN, Supabase Auth and the simulator disabled"
                 )
+            if not self.supabase_secret_key or not self.supabase_secret_key.get_secret_value():
+                raise ValueError("Set SUPABASE_SECRET_KEY for hosted account deletion")
         if self.kimi_api_key:
             provider = urlsplit(self.kimi_base_url)
             if (

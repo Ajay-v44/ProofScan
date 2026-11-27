@@ -118,6 +118,7 @@ function ProfileDetails({ owner }: { owner: string }) {
       <section className="panel profile-panel profile-session">
         <header><ShieldCheck size={21} aria-hidden /><h2>Account and privacy</h2></header>
         <Link href="/privacy" className="quiet-link">Privacy and evidence retention <ArrowRight size={16} aria-hidden /></Link>
+        <Link href="/account/delete" className="quiet-link">Delete account <ArrowRight size={16} aria-hidden /></Link>
         <ErrorNote error={signOut.error} />
         <Button variant="outline" disabled={signOut.isPending} onClick={() => signOut.mutate()}><LogOut size={17} aria-hidden />Sign out</Button>
       </section>

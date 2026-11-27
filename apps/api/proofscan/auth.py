@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .blocking_work import WorkBudget
 from .config import settings
-from .db import User, now, session
+from .db import DeletedAccount, User, now, session
 from .schemas import Credentials
 from .signing import decode, encode
 
@@ -89,8 +89,13 @@ async def current_user(request: Request, db: DB) -> UUID:
         version = await db.scalar(select(User.session_version).where(User.id == user))
         if version is None or claims.get("v", 0) != version:
             raise HTTPException(401, "Sign in again.")
-    elif await db.scalar(select(User.id).where(User.id == user)) is None:
-        await db.execute(insert(User).values(id=user).on_conflict_do_nothing(index_elements=["id"]))
+    else:
+        if await db.get(DeletedAccount, user) is not None:
+            raise HTTPException(401, "This account has been deleted.")
+        if await db.scalar(select(User.id).where(User.id == user)) is None:
+            await db.execute(insert(User).values(id=user).on_conflict_do_nothing(index_elements=["id"]))
+            if await db.get(DeletedAccount, user) is not None:
+                raise HTTPException(401, "This account has been deleted.")
     if isinstance(claims.get("email"), str):
         request.state.account_email = claims["email"]
     return user
@@ -137,7 +142,9 @@ def login(response: Response, user: UUID, version: int = 0) -> dict[str, str]:
     return {"user_id": str(user)}
 
 
-async def supabase_login(data: Credentials, response: Response, *, signup: bool) -> dict[str, str]:
+async def supabase_login(
+    data: Credentials, response: Response, db: DB, *, signup: bool
+) -> dict[str, str]:
     config = settings()
     key = config.supabase_publishable_key
     assert key is not None
@@ -168,6 +175,8 @@ async def supabase_login(data: Credentials, response: Response, *, signup: bool)
     if not isinstance(token, str) or not token or lifetime <= 0:
         raise HTTPException(503, "Sign-in service is unavailable.")
     user = await subject(token)
+    if await db.get(DeletedAccount, user) is not None:
+        raise HTTPException(401, "This account has been deleted.")
     set_cookie(response, COOKIE, token, "/", min(lifetime, 3600))
     return {"user_id": str(user)}
 
@@ -175,7 +184,7 @@ async def supabase_login(data: Credentials, response: Response, *, signup: bool)
 @router.post("/register", status_code=201)
 async def register(data: Credentials, response: Response, db: DB) -> dict[str, str]:
     if settings().auth_mode == "supabase":
-        return await supabase_login(data, response, signup=True)
+        return await supabase_login(data, response, db, signup=True)
     salt = secrets.token_bytes(16)
     digest = await password_work.run(password_digest, data.password, salt)
     insert_user = (
@@ -193,7 +202,7 @@ async def register(data: Credentials, response: Response, db: DB) -> dict[str, s
 @router.post("/login")
 async def authenticate(data: Credentials, response: Response, db: DB) -> dict[str, str]:
     if settings().auth_mode == "supabase":
-        return await supabase_login(data, response, signup=False)
+        return await supabase_login(data, response, db, signup=False)
     user = await db.scalar(select(User).where(User.email == data.email))
     salt, expected = (user.password_hash or ".").split(".") if user else ("", "")
     digest = await password_work.run(password_digest, data.password, decode(salt) if salt else bytes(16))

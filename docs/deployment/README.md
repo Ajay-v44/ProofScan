@@ -18,6 +18,8 @@ Use HTTPS, a restricted database role on an isolated application database or sch
 
 Set `DEPLOYMENT_ENVIRONMENT=production` for the public release. This requires HTTPS, Supabase Auth, and the simulator disabled. The API can still use your own PostgreSQL server. Complete the [public launch gates](../release-readiness.md#public-launch-gates) before enabling public traffic.
 
+Set `SUPABASE_SECRET_KEY` in the server environment for the Auth Admin API. ProofScan deletes the workspace data and revokes app access in one transaction. The worker removes the Supabase identity on the next scheduled run and retries provider failures. Monitor pending rows in `deleted_accounts` with a non-null `provider_retry_at` and watch for hosted deletion retry events. After restoring an older backup, reconcile account deletions against the current deletion records before accepting traffic. [Supabase Auth Admin deletion](https://supabase.com/docs/reference/python/auth-admin-deleteuser)
+
 ### Public marketing and downloads
 
 The public pitch is available at `/` and `/home`, with `/` as the canonical URL. The buyer app starts at `/workspace` and the operator dashboard remains at `/admin` for authorized accounts. The presentation at `/home#demo` uses clearly labeled illustrative reports, so it works without signing in or enabling the API simulator.

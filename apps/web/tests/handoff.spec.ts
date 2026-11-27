@@ -20,6 +20,9 @@ test("owner records baseline, receiver accepts and return produces a signed comp
     await recipient.goto(link);
     await recipient.getByRole("button", { name: "Accept handoff" }).click();
     await expect(recipient.getByText("Acceptance recorded.")).toBeVisible();
+    await expect(recipient).not.toHaveURL(/#/);
+    await recipient.reload();
+    await expect(recipient.getByText("Acceptance recorded.")).toBeVisible();
   } finally {
     await recipient.close();
   }

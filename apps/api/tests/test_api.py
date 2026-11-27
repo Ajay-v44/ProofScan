@@ -16,6 +16,7 @@ from proofscan.db import (
     Base,
     CaptureLink,
     Challenge,
+    DeletedAccount,
     Evidence,
     Guest,
     ModelCall,
@@ -32,6 +33,69 @@ from proofscan.signing import encode
 
 pytestmark = pytest.mark.skipif(not os.environ.get("TEST_DATABASE_URL"), reason="Set TEST_DATABASE_URL")
 PASSWORD = "integration-test-password"
+
+
+@pytest.mark.parametrize("upstream, expected", [(200, 202), (404, 202), (429, 503), (503, 503)])
+async def test_hosted_recovery_handles_provider_failures(clients, monkeypatch, upstream, expected):
+    from pydantic import SecretStr
+
+    client, _ = clients
+    config = settings()
+    config.auth_mode = "supabase"
+    config.supabase_url = "https://provider.example"
+    config.supabase_publishable_key = SecretStr("test-key")
+    native_client = httpx.AsyncClient
+
+    def recovery(request):
+        assert request.url.path == "/auth/v1/recover"
+        return httpx.Response(upstream, json={"error_code": "user_not_found"} if upstream == 404 else {})
+
+    async with client() as browser:
+        monkeypatch.setattr(
+            httpx,
+            "AsyncClient",
+            lambda **kwargs: native_client(transport=httpx.MockTransport(recovery), **kwargs),
+        )
+        response = await browser.post("/api/v1/auth/recover", json={"email": "fixture@example.test"})
+        assert response.status_code == expected
+
+
+async def test_hosted_deletion_retries_and_accepts_an_already_removed_identity(clients, monkeypatch):
+    from pydantic import SecretStr
+
+    from proofscan.account_deletion import finish_hosted_deletions
+
+    _, factory = clients
+    config = settings()
+    config.auth_mode = "supabase"
+    config.supabase_url = "https://provider.example"
+    config.supabase_secret_key = SecretStr("sb_secret_fixture")
+    subject = uuid4()
+    async with factory.begin() as db:
+        db.add(DeletedAccount(id=subject, provider_retry_at=now()))
+        engine = db.bind
+    native_client = httpx.AsyncClient
+    responses = iter([httpx.Response(503), httpx.Response(404, json={"error_code": "user_not_found"})])
+
+    def provider(request):
+        assert request.method == "DELETE"
+        assert request.url.path == f"/auth/v1/admin/users/{subject}"
+        assert request.headers["apikey"] == "sb_secret_fixture"
+        return next(responses)
+
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: native_client(transport=httpx.MockTransport(provider), **kwargs),
+    )
+    assert await finish_hosted_deletions(engine) == 0
+    async with factory.begin() as db:
+        job = await db.get_one(DeletedAccount, subject)
+        assert job.provider_retry_at > now()
+        job.provider_retry_at = now()
+    assert await finish_hosted_deletions(engine) == 1
+    async with factory() as db:
+        assert (await db.get_one(DeletedAccount, subject)).provider_retry_at is None
 
 
 @pytest.fixture
@@ -835,6 +899,7 @@ async def test_purchase_views_pickup_and_private_report_retrieval(clients, monke
             }
 
         ticket, reading = await request_scan(seller, path, "Verified phone seller@example.test")
+        reading["hardware"].update(cpu=["Original CPU"], gpu=["Original GPU"])
         assert (await seller.post(path + "/submit", json=reading)).status_code == 422
         await upload_views(seller, path, ticket)
         preview = (await seller.post(path + "/submit", json=reading)).json()["preview"]
@@ -905,12 +970,13 @@ async def test_purchase_views_pickup_and_private_report_retrieval(clients, monke
             seller, pickup_record["id"], pickup_record["guest_url"].split("#")[1]
         )
         ticket, reading = await request_scan(seller, next_path, "Different phone")
+        reading["hardware"].update(cpu=["Replacement CPU"], gpu=["Replacement GPU"])
         await upload_views(seller, next_path, ticket)
         response = await seller.post(next_path + "/submit", json=reading)
         assert response.is_success, response.text
         comparison = response.json()["preview"]["pickup"]
         assert comparison["baseline_report_id"] == preview["report_id"]
-        assert "Model" in comparison["changed_hardware"]
+        assert set(comparison["changed_hardware"]) == {"Model", "Processor", "Graphics"}
         assert {item["status"] for item in comparison["visuals"]} == {"reused"}
         assert (await buyer.get("/api/v1/admin/agent-usage")).status_code == 403
         usage = (await admin.get("/api/v1/admin/agent-usage")).json()["workflows"]

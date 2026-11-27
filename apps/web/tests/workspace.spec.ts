@@ -54,6 +54,11 @@ test("the workspace can load older verifications from PostgreSQL", async ({ page
   const oldest = page.getByText("Fixture verification 0", { exact: true });
   await expect(page.locator(".verification-item")).toHaveCount(30);
   await expect(oldest).toHaveCount(0);
+  await page.getByRole("button", { name: "Search workspace" }).click();
+  await page.getByRole("textbox", { name: "Search verifications and tools" }).fill("Fixture verification 0");
+  await page.getByRole("dialog").getByRole("button", { name: "Fixture verification 0" }).click();
+  await expect(page.getByRole("dialog", { name: "Fixture verification 0" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Load more" }).click();
   await expect(oldest).toBeVisible();
   await expect(page.locator(".verification-item")).toHaveCount(31);

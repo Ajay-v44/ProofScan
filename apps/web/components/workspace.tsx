@@ -83,7 +83,7 @@ function VerificationDetails({ record }: { record: Verification }) {
 
 function Records({ rows, showExamples, pending, onExample, onRecord, onRefresh, onCreate }: {
   rows: Verification[]; showExamples: boolean; pending: boolean;
-  onExample: (item: Example) => void; onRecord: (id: string) => void;
+  onExample: (item: Example) => void; onRecord: (record: Verification) => void;
   onRefresh: () => void; onCreate: () => void;
 }) {
   const [filter, setFilter] = useState<Filter>("All");
@@ -123,13 +123,13 @@ function Records({ rows, showExamples, pending, onExample, onRecord, onRefresh, 
               <button type="button" className="text-action" onClick={() => onExample(item)}>View sample report</button></div>
           </li>)}
           {visible.map(row => <li className="verification-item" key={row.id}>
-            <button type="button" className="record-main" onClick={() => onRecord(row.id)}>
+            <button type="button" className="record-main" onClick={() => onRecord(row)}>
               <span className="device-thumb thumb-lilac"><Laptop size={24} strokeWidth={1.65} aria-hidden /></span>
               <span className="record-text"><strong>{row.label}</strong><time dateTime={row.created_at}>{new Date(row.created_at).toLocaleDateString()}</time></span>
             </button>
             <div className="record-end"><Status value={row.status} />
               {row.status === "COMPLETED" ? <Link className="text-action" href={"/reports/" + row.id}>Open report</Link>
-                : <button className="text-action" type="button" onClick={() => onRecord(row.id)}>View details</button>}</div>
+                : <button className="text-action" type="button" onClick={() => onRecord(row)}>View details</button>}</div>
           </li>)}
         </ul>}
   </section>;
@@ -159,13 +159,21 @@ function SellerLink() {
   </form>;
 }
 
-function SearchWorkspace({ rows, onExample, onRecord, onCreate, onSeller }: {
-  rows: Verification[]; onExample: (item: Example) => void; onRecord: (id: string) => void;
+function SearchWorkspace({ rows, owner, onExample, onRecord, onCreate, onSeller }: {
+  rows: Verification[]; owner: string | undefined; onExample: (item: Example) => void;
+  onRecord: (record: Verification) => void;
   onCreate: () => void; onSeller: () => void;
 }) {
   const [query, setQuery] = useState("");
   const results = useRef<HTMLDivElement>(null);
-  const value = query.trim().toLowerCase();
+  const term = query.trim();
+  const value = term.toLowerCase();
+  const matches = useQuery({
+    queryKey: ["verification-search", owner, term],
+    enabled: Boolean(owner && term),
+    queryFn: () => api<Verification[]>("/verifications?q=" + encodeURIComponent(term)),
+  });
+  const searching = Boolean(owner && term && matches.isPending);
   const actions = [
     { name: "New verification", icon: ScanLine, onClick: onCreate },
     { name: "Open a seller link", icon: Link2, onClick: onSeller },
@@ -175,7 +183,7 @@ function SearchWorkspace({ rows, onExample, onRecord, onCreate, onSeller }: {
     { name: "Check a report", icon: ShieldCheck, href: "/verify" },
     { name: "Buyer chat", icon: Sparkles, href: "/advisor" },
   ].filter(item => item.name.toLowerCase().includes(value));
-  const real = rows.filter(item => (item.label + " " + item.id).toLowerCase().includes(value)).slice(0, 8);
+  const real = (term ? matches.data ?? [] : rows).slice(0, 8);
   const samples = examples.filter(item => item.label.toLowerCase().includes(value));
   function navigate(event: ReactKeyboardEvent<HTMLDivElement>) {
     const items = Array.from(results.current?.querySelectorAll<HTMLElement>("button, a") ?? []);
@@ -191,13 +199,16 @@ function SearchWorkspace({ rows, onExample, onRecord, onCreate, onSeller }: {
   }
   return <div className="search-dialog-body" onKeyDown={navigate}>
     <label className="search-field"><Search size={19} aria-hidden /><input data-dialog-autofocus aria-label="Search verifications and tools" value={query}
-      onChange={event => setQuery(event.target.value)} placeholder="Search verifications and tools" /></label>
+      onChange={event => setQuery(event.target.value)} maxLength={120} placeholder="Search verifications and tools" /></label>
     <div className="search-results" ref={results}>
       {actions.map(({ name, icon: Icon, onClick }) => <button key={name} onClick={onClick}><Icon size={18} aria-hidden />{name}</button>)}
       {links.map(({ name, icon: Icon, href }) => <Link href={href} key={name}><Icon size={18} aria-hidden />{name}</Link>)}
-      {real.map(item => <button key={item.id} onClick={() => onRecord(item.id)}><Laptop size={18} aria-hidden />{item.label}</button>)}
+      {real.map(item => <button key={item.id} onClick={() => onRecord(item)}><Laptop size={18} aria-hidden />{item.label}</button>)}
       {samples.map(item => <button key={item.id} onClick={() => onExample(item)}><FileCheck2 size={18} aria-hidden />{item.label}<small>Example</small></button>)}
-      {!actions.length && !links.length && !real.length && !samples.length && <p role="status">No matches. Try a device name or a tool.</p>}
+      {searching && <p role="status">Searching verifications…</p>}
+      <ErrorNote error={matches.error} />
+      {!searching && !matches.error && !actions.length && !links.length && !real.length && !samples.length &&
+        <p role="status">No matches. Try a device name or a tool.</p>}
     </div>
   </div>;
 }
@@ -208,7 +219,7 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
   const [section, setSection] = useState(initialSection);
   const [overlay, setOverlay] = useState<Overlay>(initialOverlay);
   const [sample, setSample] = useState<Example | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Verification | null>(null);
   const session = useQuery({ queryKey: ["session"], queryFn: () => api<Session>("/auth/session") });
   const user = session.data;
   const rows = useOwnerCollection<Verification>("/verifications", "verifications", user?.user_id, { pollInterval: 7500 });
@@ -218,7 +229,7 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
   const logout = useMutation({ mutationFn: () => api("/auth/logout", {}),
     onSuccess: () => { client.clear(); window.location.reload(); } });
   const sessionError = session.error instanceof ApiError && session.error.status === 401 ? null : session.error;
-  const current = rows.items.find(row => row.id === selected);
+  const current = user && selected && (rows.items.find(row => row.id === selected.id) ?? selected);
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -242,7 +253,7 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
     else router.push(accountHref("sign-in", "/workspace?action=new"));
   }
   function viewExample(item: Example) { close(); setSelected(null); setSample(item); }
-  function viewRecord(id: string) { close(); setSample(null); setSelected(id); }
+  function viewRecord(record: Verification) { close(); setSample(null); setSelected(record); }
 
   return <>
     <WorkspaceFrame page={section} onSectionChange={setSection}
@@ -335,7 +346,8 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
       </div>
     </Dialog>}
     {overlay === "search" && <Dialog title="Search workspace" onClose={close}>
-      <SearchWorkspace rows={rows.items} onCreate={create} onExample={viewExample} onRecord={viewRecord} onSeller={() => setOverlay("seller")} />
+      <SearchWorkspace rows={rows.items} owner={user?.user_id} onCreate={create} onExample={viewExample}
+        onRecord={viewRecord} onSeller={() => setOverlay("seller")} />
     </Dialog>}
     {sample && <Dialog title={sample.label} placement="side" onClose={() => setSample(null)}><div className="detail-body">
       <ReportDetails report={sample.report} photoPath="" /></div></Dialog>}

@@ -367,7 +367,7 @@ Expo public values are readable from the app bundle. Database passwords, auth an
 2. Build the web image with `API_INTERNAL_ORIGIN` pointing to the API service. Deploy it behind HTTPS and preserve browser access to `/api/v1` through the same origin.
 3. Set `WEB_ORIGIN` to the public origin, provide the real secrets to the API and worker, and set `ENABLE_SIMULATOR=false` for normal use. Run a single Celery Beat scheduler.
 4. Check API health, sign-in, an end-to-end seller verification, signature verification, scheduler activity, and database backups before routing user traffic. Protect private seller links, photos, and scan files when collecting support diagnostics.
-5. For mobile distribution, link the EAS project, supply the deployed HTTPS workspace and policy URLs, configure signing, and validate internal builds on physical Android and iOS devices. A public store release also needs a live account-deletion flow. The workspace currently has no account-deletion backend.
+5. For mobile distribution, link the EAS project, configure signing, and validate internal builds on physical Android and iOS devices. Point the app to the deployed HTTPS privacy and `/account/delete` pages. Test hosted account deletion with the configured API, worker, and scheduler before store submission.
 
 See the [deployment guide](docs/deployment/README.md), [report key rotation guide](docs/security/report-signing.md), and [mobile release guide](docs/development/mobile-release.md).
 

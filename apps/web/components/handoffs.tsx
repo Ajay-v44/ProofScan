@@ -216,15 +216,31 @@ export function HandoffDetail({ id }: { id: string }) {
 }
 
 export function AcceptHandoff({ id }: { id: string }) {
+  const path = "/handoffs/" + id + "/accept";
+  const key = ["handoff-acknowledgment", id] as const;
+  const client = useQueryClient();
+  const progress = useQuery({
+    queryKey: key,
+    queryFn: async () => {
+      const result = await api<{ accepted: boolean }>(path);
+      return { ...result, hasToken: /^[A-Za-z0-9_-]{43}$/.test(window.location.hash.slice(1)) };
+    },
+  });
   const accept = useMutation({
-    mutationFn: () => api("/handoffs/" + id + "/accept", { token: window.location.hash.slice(1) }),
-    onSuccess: () => window.history.replaceState(null, "", window.location.pathname),
+    mutationFn: () => api(path, { token: window.location.hash.slice(1) }),
+    onSuccess: () => {
+      window.history.replaceState(null, "", window.location.pathname);
+      client.setQueryData(key, { accepted: true, hasToken: false });
+    },
   });
   return <PublicShell isGuest><section className="panel form">
     <h1>Acknowledge a handoff</h1>
     <p>Accept to record when you acknowledged receiving the item.</p>
-    <ErrorNote error={accept.error} />
-    {accept.isSuccess ? <p className="notice good" role="status">Acceptance recorded.</p>
-      : <Button disabled={accept.isPending} onClick={() => accept.mutate()}>Accept handoff</Button>}
+    <ErrorNote error={accept.error ?? progress.error} />
+    {progress.isPending && <p role="status">Opening invitation…</p>}
+    {progress.isError && <Button onClick={() => void progress.refetch()}>Try again</Button>}
+    {progress.data?.accepted ? <p className="notice good" role="status">Acceptance recorded.</p>
+      : progress.data?.hasToken ? <Button disabled={accept.isPending} onClick={() => accept.mutate()}>Accept handoff</Button>
+        : progress.data && <p>Open the original private invitation to acknowledge this handoff.</p>}
   </section></PublicShell>;
 }

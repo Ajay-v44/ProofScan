@@ -91,6 +91,16 @@ def provider_settings() -> tuple[str, dict[str, str]]:
     }
 
 
+def unknown_recovery_account(result: httpx.Response) -> bool:
+    if result.status_code != 404:
+        return False
+    try:
+        value = result.json()
+    except ValueError:
+        return False
+    return isinstance(value, dict) and (value.get("error_code") or value.get("code")) == "user_not_found"
+
+
 @router.post("/recover", status_code=202)
 async def request_recovery(data: Recovery) -> dict[str, Method]:
     if recovery_method() == "email":
@@ -100,7 +110,7 @@ async def request_recovery(data: Recovery) -> dict[str, Method]:
                 result = await client.post(
                     origin + "/recover", headers=headers, json={"email": data.email}
                 )
-            if result.status_code >= 500:
+            if not result.is_success and not unknown_recovery_account(result):
                 raise HTTPException(503, "Password recovery is temporarily unavailable.")
         except httpx.RequestError as exc:
             raise HTTPException(503, "Password recovery is temporarily unavailable.") from exc

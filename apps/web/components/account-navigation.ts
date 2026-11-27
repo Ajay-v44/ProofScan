@@ -1,6 +1,6 @@
 const destinations = new Set([
   "/workspace", "/workspace?action=new", "/workspace?view=activity", "/workspace?view=verifications",
-  "/profile", "/handoffs", "/advisor", "/admin",
+  "/profile", "/account/delete", "/handoffs", "/advisor", "/admin",
 ]);
 
 export function accountDestination(value: unknown): string {

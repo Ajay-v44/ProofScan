@@ -46,6 +46,13 @@ class User(Created, Base):
     session_version: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
 
+class DeletedAccount(Base):
+    __tablename__ = "deleted_accounts"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    provider_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class Verification(Created, Base):
     __tablename__ = "verification_requests"
     __table_args__ = (Index("ix_verification_owner_created", "owner_id", "created_at", "id"),)
@@ -239,7 +246,7 @@ class Notification(Created, Base):
 class Audit(Created, Base):
     __tablename__ = "admin_audit_logs"
 
-    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    actor_id: Mapped[UUID] = mapped_column(Uuid, index=True)
     action: Mapped[str] = mapped_column(String(32))
     target_id: Mapped[UUID] = mapped_column(Uuid, index=True)
     reason: Mapped[str] = mapped_column(String(280))

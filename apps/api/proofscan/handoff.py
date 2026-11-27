@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import Select, exists, func, select
 
 from .agent.usage import record_usage
-from .auth import DB, Owner
+from .auth import DB, Owner, set_cookie
 from .config import settings
 from .db import Notification, now
 from .domain import InvalidTransition
@@ -591,8 +591,28 @@ async def invite(handoff_id: UUID, owner: Owner, db: DB) -> dict[str, str]:
     return {"url": f"{settings().web_origin.rstrip('/')}/accept/{item.id}#{raw}"}
 
 
+ACCEPTANCE_COOKIE = "proofscan_acknowledgment"
+
+
+@router.get("/{handoff_id}/accept")
+async def acknowledgment(handoff_id: UUID, request: Request, db: DB) -> dict[str, bool]:
+    token = request.cookies.get(ACCEPTANCE_COOKIE)
+    if token is None or len(token) != 43:
+        return {"accepted": False}
+    recorded = await db.scalar(
+        select(Acceptance.accepted_at).where(
+            Acceptance.handoff_id == handoff_id,
+            Acceptance.token_digest == token_hash(token),
+            Acceptance.expires_at > now(),
+        )
+    )
+    return {"accepted": recorded is not None}
+
+
 @router.post("/{handoff_id}/accept")
-async def accept(handoff_id: UUID, data: GuestExchange, db: DB) -> dict[str, datetime]:
+async def accept(
+    handoff_id: UUID, data: GuestExchange, db: DB, response: Response
+) -> dict[str, datetime]:
     item = await db.scalar(select(Handoff).where(Handoff.id == handoff_id).with_for_update())
     if item is None or item.status not in {State.BASELINE_CREATED, State.ACTIVE_HANDOFF}:
         raise HTTPException(404, "This handoff invitation is unavailable.")
@@ -607,4 +627,12 @@ async def accept(handoff_id: UUID, data: GuestExchange, db: DB) -> dict[str, dat
         raise HTTPException(404, "This handoff invitation is unavailable.")
     if invite.accepted_at is None:
         invite.accepted_at = now()
+    path = f"/api/v1/handoffs/{handoff_id}/accept"
+    set_cookie(
+        response,
+        ACCEPTANCE_COOKIE,
+        data.token,
+        path,
+        max(0, int((invite.expires_at - now()).total_seconds())),
+    )
     return {"accepted_at": invite.accepted_at}

@@ -27,7 +27,7 @@ const config: NextConfig = {
         { key: "X-Frame-Options", value: "DENY" },
       ],
     }, {
-      source: "/:section(workspace|admin|reports|seller|capture|accept|advisor|handoffs|sign-in|sign-up|forgot-password|reset-password|profile)/:path*",
+      source: "/:section(workspace|admin|reports|seller|capture|accept|advisor|handoffs|sign-in|sign-up|forgot-password|reset-password|profile|account)/:path*",
       headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
     }, {
       source: "/verify/:id",
