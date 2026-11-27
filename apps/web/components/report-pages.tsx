@@ -3,6 +3,7 @@
 import { api, type SignedReport, type VerificationResult } from "@proofscan/api-client";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ShieldCheck, ShieldX } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ReportDetails } from "./report";
@@ -71,17 +72,26 @@ export function BuyerReport({ id }: { id: string }) {
 export function VerifyReport({ id }: { id?: string }) {
   const router = useRouter();
   const result = useQuery({ queryKey: ["verify", id], enabled: !!id, staleTime: 0, queryFn: () => api<VerificationResult>("/reports/" + id + "/verify") });
-  return <PublicShell><div className="page-title"><span className="eyebrow"><ShieldCheck size={16} aria-hidden /> Report integrity</span><h1>Check a report</h1><p>Look up a report ID to check its signature and current validity.</p></div>
-    <form className="panel form" key={id ?? "lookup"} onSubmit={event => {
+  return <PublicShell wide><div className="signature-lookup">
+    <section className="panel form signature-panel">
+      <div className="page-title"><span className="icon-tile mint"><ShieldCheck size={21} aria-hidden /></span>
+        <h1>Check a report</h1><p>Look up a report ID to check its signature and current validity.</p></div>
+      <form className="form" key={id ?? "lookup"} onSubmit={event => {
       event.preventDefault();
       const value = String(new FormData(event.currentTarget).get("report") ?? "").trim();
       if (value === id) void result.refetch();
       else router.push("/verify/" + encodeURIComponent(value));
     }}>
       <label>Report ID<input name="report" defaultValue={id} placeholder="Paste the report ID" required pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" /></label>
-      <Button type="submit">Check signature</Button>
-    </form>
-    <ErrorNote error={result.error} />
+        <Button type="submit" disabled={result.isFetching}>{result.isFetching ? "Checking…" : "Check signature"}</Button>
+      </form>
+      <ErrorNote error={result.error} />
+    </section>
+    <aside className="panel signature-help">
+      <Image src="/workspace/verify.webp" width={840} height={560} alt="" unoptimized />
+      <div><h2>Where to find the ID</h2><p>Open the signed report shared with you and copy its report ID from the signature section.</p></div>
+    </aside>
+    </div>
     {id && result.isPending && <p role="status">Checking signature…</p>}
     {result.data && <section className="panel form">
       <div className={"icon-tile " + (result.data.valid ? "mint" : "clay")}>{result.data.valid ? <ShieldCheck size={24} aria-hidden /> : <ShieldX size={24} aria-hidden />}</div>

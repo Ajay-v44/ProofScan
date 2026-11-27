@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from .account import router as account
 from .agent.device import router as device_agent
 from .agent.routes import router as advisor
 from .agent.telemetry import flush_telemetry
@@ -100,6 +101,7 @@ async def platforms() -> dict[str, Capability]:
 
 for router in (
     auth,
+    account,
     owner_router,
     guest_router,
     reports,

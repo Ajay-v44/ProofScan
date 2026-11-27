@@ -34,9 +34,9 @@ test("workspace is usable at phone width and preserves the handoff entry", async
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.getByRole("link", { name: /Protect a handoff/ }).click();
   await expect(page.getByRole("heading", { name: "Protect a handoff" })).toBeVisible();
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  const auth = page.getByRole("dialog", { name: "Sign in" });
-  await expect(auth.getByLabel("Email")).toBeFocused();
+  await page.getByRole("link", { name: "Sign in", exact: true }).click();
+  await expect(page).toHaveURL(/\/sign-in\?next=%2Fhandoffs$/);
+  await expect(page.getByLabel("Email address")).toBeVisible();
 });
 
 test("the workspace can load older verifications from PostgreSQL", async ({ page }) => {

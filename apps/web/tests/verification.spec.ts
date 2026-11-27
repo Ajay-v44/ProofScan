@@ -6,9 +6,9 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 
 async function createVerification(buyer: Page, label: string, claims = true) {
   await buyer.goto("/workspace");
-  await buyer.getByRole("button", { name: "Create an account" }).click();
+  await buyer.getByRole("link", { name: "Create an account" }).click();
   await buyer.getByLabel("Email").fill("e2e-" + randomUUID() + "@example.test");
-  await buyer.getByLabel("Password").fill("Local-Playwright-" + randomUUID());
+  await buyer.getByLabel("Password", { exact: true }).fill("Local-Playwright-" + randomUUID());
   await buyer.getByRole("button", { name: "Create account", exact: true }).click();
   await buyer.getByRole("button", { name: "New verification", exact: true }).click();
   await buyer.getByLabel("Device name").fill(label);

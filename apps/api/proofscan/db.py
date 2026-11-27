@@ -41,6 +41,9 @@ class User(Created, Base):
 
     email: Mapped[str | None] = mapped_column(String(254), unique=True)
     password_hash: Mapped[str | None] = mapped_column(String(180))
+    display_name: Mapped[str | None] = mapped_column(String(60))
+    recovery_hash: Mapped[str | None] = mapped_column(String(64))
+    session_version: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
 
 class Verification(Created, Base):

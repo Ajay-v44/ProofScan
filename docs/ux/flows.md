@@ -46,3 +46,14 @@ ImageGen produced the ProofScan mark and the device inspection photograph. The w
 | Windows | Read-only CIM hardware scan and Tauri source |
 | macOS | Tauri source for model, memory and available CPU name. Native runtime validation is pending. |
 | Android and iOS | Expo seller client for model, supported memory, camera, consent and report decisions. Physical-device validation and store attestation are pending. |
+
+## Account pages
+
+Sign-in, sign-up, password recovery, and profile use separate routes. The desktop layout places ProofScan’s device photography beside the form. At smaller widths the image becomes a shallow banner so the form remains easy to reach. The photos and focus states use the same navy and apricot palette as the public presentation.
+
+- Authentication returns users to the workspace, handoffs, Buyer Chat, profile, or operator area that asked them to sign in. Starting a verification while signed out reopens the verification sheet after sign-in.
+- The verification sheet keeps the device name and advertised specs together. After creation it shows the private seller link, expiry, copy action and open-link action. The public report lookup shows where to find the ID and retains the detailed signature result.
+- Profile stores a display name and shows the sign-in address and recovery method. Local users can generate a one-time recovery code and save it separately from their password.
+- The browser, Tauri workspace, and Expo workspace use the same pages. The Expo scanner shows progress while opening a seller link or removing a saved session. The Tauri collector offers a keyboard-accessible file picker and shows the name of the current scan ticket.
+
+The account redesign passed web lint, workspace type checks, the production web and Tauri frontend builds, and the Android and iOS Expo exports. The API passed Ruff, mypy and 67 tests against disposable PostgreSQL with pgvector. Alembic applied the account migration and found no pending schema changes. Playwright passed 14 tests, including account recovery and verification at phone and desktop widths. The physical Windows collector test was skipped. The Tauri picker passed a browser check for keyboard focus, ticket replacement, and 320 px reflow. Live Supabase recovery email and physical native keyboard and password-manager behavior still need acceptance testing.

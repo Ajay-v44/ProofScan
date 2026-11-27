@@ -1,0 +1,145 @@
+.account-page {
+  --account-width: 1320px;
+  min-height: 100dvh;
+  background: #f4f2ef;
+}
+
+.account-header {
+  width: min(100%, var(--account-width));
+  min-height: 76px;
+  margin-inline: auto;
+  padding-inline: clamp(16px, 3vw, 38px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-back, .account-visual-copy a, .account-footer, .profile-identity span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-back, .account-footer a {
+  color: var(--muted);
+  font-size: .9rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.account-back { min-height: 44px; }
+.account-back:hover, .account-footer a:hover { text-decoration: underline; }
+
+.account-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, .88fr);
+  gap: clamp(12px, 1.8vw, 24px);
+  width: min(100%, var(--account-width));
+  margin-inline: auto;
+  padding: 0 clamp(16px, 3vw, 38px) clamp(16px, 3vw, 38px);
+}
+
+.account-visual {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: end;
+  overflow: hidden;
+  min-height: min(740px, calc(100dvh - 115px));
+  background: var(--ps-navy);
+  color: white;
+  border-radius: var(--ps-cover);
+}
+
+.account-visual img { object-fit: cover; object-position: center 40%; z-index: -2; }
+.account-visual::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(0deg, #111d2bfa, #111d2bb0 30%, transparent 65%);
+}
+
+.account-visual-copy { display: grid; gap: 13px; padding: clamp(24px, 4vw, 54px); }
+.account-visual-copy h2 { font-size: clamp(2.2rem, 4.5vw, 4rem); line-height: 1.03; letter-spacing: -.06em; }
+.account-visual-copy p { color: var(--ps-inverse-text); max-width: 31ch; }
+.account-visual-copy a { width: fit-content; min-height: 44px; color: var(--ps-accent); font-weight: 770; text-underline-offset: 4px; }
+.account-visual-copy :focus-visible { outline-color: var(--ps-accent); }
+
+.account-panel {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 25px;
+  min-width: 0;
+  padding: clamp(22px, 4.5vw, 68px);
+  border: 1px solid var(--line);
+  border-radius: var(--ps-cover);
+  background: var(--ps-surface);
+}
+
+.account-panel-inner { width: min(100%, 390px); min-width: 0; display: grid; gap: 22px; }
+.account-copy { display: grid; gap: 8px; }
+.account-copy h1 { font-size: clamp(2rem, 3.7vw, 3.1rem); }
+.account-copy p, .account-form > p, .account-switch, .profile-panel > p, .field-hint { color: var(--muted); }
+.account-form { display: grid; gap: 16px; min-width: 0; }
+.account-field { display: grid; gap: 6px; min-width: 0; }
+.account-field input { width: 100%; min-width: 0; min-height: 48px; }
+.account-label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.account-label-row a, .account-switch a { color: var(--brand); font-weight: 760; text-underline-offset: 3px; }
+.account-label-row a { padding-block: 7px; font-size: .875rem; }
+.password-input { position: relative; }
+.password-input input { padding-inline-end: 48px; }
+.password-input .icon-button { position: absolute; inset: 2px 2px 2px auto; }
+.account-submit { width: 100%; min-height: 48px; justify-content: space-between; text-align: start; }
+.account-switch, .field-hint { font-size: .875rem; }
+.account-footer { gap: 20px; width: min(100%, 390px); padding-top: 16px; border-top: 1px solid var(--line); }
+.account-footer a { min-height: 32px; display: inline-flex; align-items: center; }
+.account-symbol, .profile-avatar { display: grid; place-items: center; width: 46px; height: 46px; margin-block-end: 4px; border-radius: 12px; background: var(--ps-brand-tint); color: var(--brand); }
+.account-complete { display: grid; justify-items: start; gap: 12px; padding: 18px; border-radius: var(--ps-control); background: var(--ps-mint); color: var(--ps-mint-ink); }
+
+.profile-cover {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 2.8vw, 30px);
+  min-width: 0;
+  padding: clamp(20px, 4vw, 46px);
+  border-radius: var(--ps-cover);
+  background: linear-gradient(90deg, #101e2c 12%, #101e2cf5 45%, #101e2c40), url("/brand/account-inspection.webp") right 45% / min(70%, 680px) auto no-repeat, var(--ps-navy);
+  color: white;
+}
+
+.profile-avatar { flex-shrink: 0; width: clamp(49px, 8vw, 74px); height: clamp(49px, 8vw, 74px); margin: 0; background: var(--ps-accent); color: var(--ps-navy); font-size: clamp(1.2rem, 2vw, 1.65rem); font-weight: 820; }
+.profile-identity { display: grid; gap: 5px; overflow-wrap: anywhere; }
+.profile-identity p { font-size: 1.1rem; font-weight: 750; }
+.profile-identity span { color: var(--ps-inverse-text); font-size: .875rem; }
+.profile-identity svg { flex-shrink: 0; }
+.profile-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.profile-panel { display: grid; align-content: start; justify-items: start; gap: 14px; min-width: 0; padding: clamp(16px, 2.3vw, 26px); }
+.profile-panel header { display: flex; align-items: center; gap: 10px; }
+.profile-panel header svg { flex-shrink: 0; color: var(--brand); }
+.profile-panel .form { width: 100%; padding: 0; }
+.profile-session { grid-column: 1 / -1; }
+.profile-session .quiet-link { display: inline-flex; align-items: center; gap: 7px; }
+.profile-session .quiet-link svg { flex-shrink: 0; }
+
+@media (max-width: 780px) {
+  .account-header { min-height: 60px; }
+  .account-layout { grid-template-columns: minmax(0, 1fr); }
+  .account-visual { min-height: 140px; }
+  .account-visual img { object-position: center 48%; }
+  .account-visual::before { background: linear-gradient(90deg, #101e2cf7, #101e2c38 76%); }
+  .account-visual-copy { gap: 3px; padding: 17px 20px; }
+  .account-visual-copy h2 { font-size: clamp(1.52rem, 6vw, 2.25rem); }
+  .account-visual-copy p { display: none; }
+  .account-visual-copy a { font-size: .82rem; }
+  .account-panel-inner, .account-footer { width: min(100%, 450px); }
+  .profile-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 370px) {
+  .account-header, .account-layout { padding-inline: 12px; }
+  .account-panel { padding: 18px 15px; }
+  .account-visual { min-height: 122px; }
+}

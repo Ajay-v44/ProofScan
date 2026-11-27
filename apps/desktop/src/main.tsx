@@ -65,19 +65,27 @@ function Collector() {
         {["Load ticket", "Collect readings", "Export scan"].map((label, index) => <li key={label}
           aria-current={index === (result ? 2 : ticket ? 1 : 0) ? "step" : undefined}><span>{index + 1}</span>{label}</li>)}
       </ol>
-      <section className="card">
-        <h2>Scan ticket</h2>
-        <label className="file-area" data-dragging={dragging} onDragOver={event => {
+      <section className="card" aria-labelledby="ticket-title">
+        <h2 id="ticket-title">Scan ticket</h2>
+        <label className="file-area" data-dragging={dragging} data-disabled={busy} onDragOver={event => {
           event.preventDefault();
           if (!busy) setDragging(true);
         }} onDragLeave={() => setDragging(false)} onDrop={event => {
           event.preventDefault(); setDragging(false);
           if (!busy) choose(event.dataTransfer.files[0] ?? null);
         }}>
-          <Upload size={19} aria-hidden />
-          <span>{ticket?.name ?? "Choose or drop a ticket file"}</span>
-          <input type="file" accept=".json,application/json" disabled={busy} aria-label="Scan ticket"
-            onChange={event => choose(event.target.files?.[0] ?? null)} />
+          <span className="file-area-icon"><Upload size={21} aria-hidden /></span>
+          <span className="file-area-label">{ticket ? "Replace ticket" : "Choose a ticket file"}</span>
+          <span id="ticket-file-detail" className="file-area-detail" aria-live="polite">
+            {ticket?.name ?? "Or drop the JSON file here"}
+          </span>
+          <input type="file" accept=".json,application/json" disabled={busy} aria-describedby="ticket-file-detail"
+            aria-label={ticket ? "Replace scan ticket" : "Choose a scan ticket"}
+            onChange={event => {
+              const picked = event.currentTarget.files?.[0];
+              if (picked) choose(picked);
+              event.currentTarget.value = "";
+            }} />
         </label>
         <button type="button" disabled={!ticket || busy} onClick={() => void collect()}>{busy ? "Collecting…" : "Collect hardware readings"}</button>
       </section>

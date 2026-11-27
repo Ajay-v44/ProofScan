@@ -3,9 +3,9 @@ import { expect, test } from "@playwright/test";
 
 test("owner records baseline, receiver accepts and return produces a signed comparison", async ({ page, browser }) => {
   await page.goto("/workspace");
-  await page.getByRole("button", { name: "Create an account" }).click();
+  await page.getByRole("link", { name: "Create an account" }).click();
   await page.getByLabel("Email").fill("handoff-" + randomUUID() + "@example.test");
-  await page.getByLabel("Password").fill("Playwright-handoff-" + randomUUID());
+  await page.getByLabel("Password", { exact: true }).fill("Playwright-handoff-" + randomUUID());
   await page.getByRole("button", { name: "Create account", exact: true }).click();
   await page.getByRole("link", { name: "Handoffs", exact: true }).click();
   await page.getByLabel("Asset name").fill("Loaner laptop");

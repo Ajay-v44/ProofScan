@@ -15,13 +15,14 @@ import { LoadMore, useOwnerCollection } from "./owner-collection";
 import { ErrorNote, Status } from "./shared";
 import { Button, buttonVariants } from "./ui/button";
 import { Dialog } from "./ui/dialog";
-import { AuthDialog, NewVerification } from "./workspace-forms";
+import { NewVerification } from "./workspace-forms";
+import { accountHref } from "./account-navigation";
 import { WorkspaceFrame, type WorkspaceSection } from "./workspace-frame";
 
 type Session = { user_id: string; listing_assistance: boolean };
 type Example = { id: string; label: string; detail: string; report: Report };
 type Filter = "All" | "In progress" | "Shared" | "Closed";
-type Overlay = "sign-in" | "register" | "new" | "seller" | "search" | "account" | null;
+type Overlay = "new" | "seller" | "search" | "account" | null;
 
 function example(id: string, label: string, manufacturer: string, model: string, storage: number): Example {
   const matches = storage === 512;
@@ -201,13 +202,13 @@ function SearchWorkspace({ rows, onExample, onRecord, onCreate, onSeller }: {
   </div>;
 }
 
-export function Workspace({ initialSection, initialOverlay }: { initialSection: WorkspaceSection; initialOverlay: "search" | "seller" | null }) {
+export function Workspace({ initialSection, initialOverlay }: { initialSection: WorkspaceSection; initialOverlay: "search" | "seller" | "new" | null }) {
+  const router = useRouter();
   const client = useQueryClient();
   const [section, setSection] = useState(initialSection);
   const [overlay, setOverlay] = useState<Overlay>(initialOverlay);
   const [sample, setSample] = useState<Example | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [afterSignIn, setAfterSignIn] = useState(false);
   const session = useQuery({ queryKey: ["session"], queryFn: () => api<Session>("/auth/session") });
   const user = session.data;
   const rows = useOwnerCollection<Verification>("/verifications", "verifications", user?.user_id, { pollInterval: 7500 });
@@ -218,7 +219,6 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
     onSuccess: () => { client.clear(); window.location.reload(); } });
   const sessionError = session.error instanceof ApiError && session.error.status === 401 ? null : session.error;
   const current = rows.items.find(row => row.id === selected);
-  const authOpen = overlay === "sign-in" || overlay === "register";
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -233,10 +233,13 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
 
-  function close() { setOverlay(null); setAfterSignIn(false); }
+  function close() {
+    setOverlay(null);
+    if (initialOverlay === "new") router.replace(section === "Verifications" ? "/workspace?view=verifications" : "/workspace", { scroll: false });
+  }
   function create() {
-    if (user) { setAfterSignIn(false); setOverlay("new"); }
-    else { setAfterSignIn(true); setOverlay("sign-in"); }
+    if (user) setOverlay("new");
+    else router.push(accountHref("sign-in", "/workspace?action=new"));
   }
   function viewExample(item: Example) { close(); setSelected(null); setSample(item); }
   function viewRecord(id: string) { close(); setSample(null); setSelected(id); }
@@ -246,7 +249,7 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
       sidebarActions={<>
         <button type="button" className="nav-link" onClick={() => setOverlay("seller")}><Link2 size={18} aria-hidden />Open a seller link</button>
         {user ? <button type="button" className="nav-link" onClick={() => logout.mutate()} disabled={logout.isPending}><LogOut size={18} aria-hidden />Sign out</button>
-          : <button type="button" className="nav-link" onClick={() => setOverlay("register")}><UserRound size={18} aria-hidden />Create an account</button>}
+          : <Link className="nav-link" href="/sign-up"><UserRound size={18} aria-hidden />Create an account</Link>}
       </>}
       lead={<button type="button" className="workspace-search" onClick={() => setOverlay("search")} aria-label="Search workspace">
         <Search size={18} aria-hidden /><span>Search verifications or tools</span><kbd>Ctrl K</kbd></button>}
@@ -254,7 +257,7 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
           {user ? <>
             <Button className="top-new" onClick={create} aria-label="New verification"><Plus size={17} aria-hidden /><span>New verification</span></Button>
           </>
-            : <Button variant="outline" onClick={() => setOverlay("sign-in")}>Sign in</Button>}
+            : <Link className={buttonVariants({ variant: "outline" })} href={accountHref("sign-in", section === "Home" ? "/workspace" : `/workspace?view=${section.toLowerCase()}`)}>Sign in</Link>}
           <button type="button" className="icon-button top-account" aria-label="Workspace options" onClick={() => setOverlay("account")}><Ellipsis size={21} aria-hidden /></button>
       </>}>
         <ErrorNote error={sessionError ?? logout.error ?? rows.error ?? activity.error} />
@@ -298,7 +301,7 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
         </>
           : <section className="library" aria-label="Request activity">
             {!user ? <div className="empty library-empty"><span className="icon-tile"><Bell size={22} aria-hidden /></span>
-              <strong>Sign in to see your activity</strong><Button variant="outline" onClick={() => setOverlay("sign-in")}>Sign in to view activity</Button></div>
+              <strong>Sign in to see your activity</strong><Link className={buttonVariants({ variant: "outline" })} href={accountHref("sign-in", "/workspace?view=activity")}>Sign in to view activity</Link></div>
               : activity.isPending ? <p className="empty" role="status">Loading activity…</p>
                 : !activity.items.length ? <p className="empty">No activity yet.</p>
                   : <ul className="records-list">{activity.items.map(item => <li key={item.id}>
@@ -310,24 +313,24 @@ export function Workspace({ initialSection, initialOverlay }: { initialSection: 
               busy={activity.isFetching} loading={activity.isFetchingNextPage} />}
           </section>}
     </WorkspaceFrame>
-    {overlay === "new" && user && <Dialog title="New verification" onClose={close}>
-      <NewVerification listingAssistance={user.listing_assistance} onClose={() => { setSection("Verifications"); close(); }} />
+    {overlay === "new" && user && <Dialog title="New verification" placement="workflow" description="Create a private link the seller can open on their device." onClose={close}>
+      <NewVerification listingAssistance={user.listing_assistance} onClose={close} onComplete={() => {
+        setSection("Verifications"); setOverlay(null);
+        if (initialOverlay === "new") router.replace("/workspace?view=verifications", { scroll: false });
+      }} />
     </Dialog>}
-    {authOpen && !user && <AuthDialog key={overlay} initialRegister={overlay === "register"} onClose={close} onAuthenticated={() => {
-        if (afterSignIn) { setAfterSignIn(false); setOverlay("new"); }
-        else close();
-      }} />}
-    {overlay === "seller" && <Dialog title="Open a seller link" onClose={close}><SellerLink /></Dialog>}
+    {overlay === "seller" && <Dialog title="Open a seller link" description="Use the private link the buyer sent you." onClose={close}><SellerLink /></Dialog>}
     {overlay === "account" && <Dialog title="Workspace options" onClose={close}>
       <div className="dialog-form"><ErrorNote error={logout.error} />
         <div className="search-results">
           <button type="button" onClick={() => setOverlay("seller")}>Open a seller link</button>
           <button type="button" onClick={() => { setSection("Activity"); close(); }}>Activity</button>
           <Link href="/verify">Check a report</Link>
+          <Link href="/profile">Profile and recovery</Link>
           <Link href="/about">About ProofScan</Link>
           <Link href="/help">Help</Link>
           {user ? <button type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>Sign out</button>
-            : <button type="button" onClick={() => setOverlay("register")}>Create an account</button>}
+            : <Link href="/sign-up">Create an account</Link>}
         </div>
       </div>
     </Dialog>}

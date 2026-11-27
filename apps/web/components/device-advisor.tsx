@@ -8,9 +8,9 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { LoadMore } from "./owner-collection";
 import { ErrorNote } from "./shared";
 import { Dialog } from "./ui/dialog";
-import { Button } from "./ui/button";
+import { Button, buttonVariants } from "./ui/button";
 import { WorkspaceFrame } from "./workspace-frame";
-import { AuthDialog } from "./workspace-forms";
+import { accountHref } from "./account-navigation";
 import "./buyer-chat.css";
 
 type Market = "IN" | "US" | "GB";
@@ -19,7 +19,6 @@ const markets = { IN: "India", US: "United States", GB: "United Kingdom" } as co
 const catalogPageSize = 30;
 
 export function DeviceAdvisor() {
-  const [signIn, setSignIn] = useState(false);
   const session = useQuery({ queryKey: ["session"], queryFn: () => api<{ user_id: string }>("/auth/session") });
   const loggedOut = session.error instanceof ApiError && session.error.status === 401;
 
@@ -30,9 +29,8 @@ export function DeviceAdvisor() {
     {loggedOut && <section className="panel form">
       <h2>Ask about ProofScan and your devices</h2>
       <p>Sign in to compare your shared reports, ask how checks work, or look up a device.</p>
-      <Button onClick={() => setSignIn(true)}>Sign in</Button>
+      <Link className={buttonVariants()} href={accountHref("sign-in", "/advisor")}>Sign in</Link>
     </section>}
-    {signIn && <AuthDialog initialRegister={false} onAuthenticated={() => setSignIn(false)} onClose={() => setSignIn(false)} />}
     {session.data && !session.isError && <Chat key={session.data.user_id} owner={session.data.user_id} />}
   </WorkspaceFrame>;
 }

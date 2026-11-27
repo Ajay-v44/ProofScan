@@ -89,6 +89,36 @@ async def register(client):
     return response.json()["user_id"], data
 
 
+@pytest.mark.asyncio
+async def test_profile_updates_and_local_recovery_are_account_scoped(clients):
+    factory, _ = clients
+    async with factory() as buyer, factory() as other, factory() as reset:
+        _, credentials = await register(buyer)
+        await register(other)
+        old_token = buyer.cookies["proofscan_session"]
+        profile = await buyer.post("/api/v1/auth/profile", json={"display_name": " Workshop Buyer "})
+        assert profile.json()["display_name"] == "Workshop Buyer"
+        assert not (await other.get("/api/v1/auth/profile")).json()["display_name"]
+        first = (await buyer.post("/api/v1/auth/recovery-code", json={})).json()["code"]
+        code = (await buyer.post("/api/v1/auth/recovery-code", json={})).json()["code"]
+        assert first != code
+        body = {"email": credentials["email"], "password": "replacement-fixture-password", "code": first}
+        assert (await reset.post("/api/v1/auth/reset", json=body)).status_code == 400
+        body["code"] = code
+        assert (await reset.post("/api/v1/auth/reset", json=body)).status_code == 204
+        assert (await reset.post("/api/v1/auth/reset", json=body)).status_code == 400
+        assert (
+            await buyer.get("/api/v1/auth/session", headers={"Authorization": "Bearer " + old_token})
+        ).status_code == 401
+        assert (await reset.post("/api/v1/auth/login", json=credentials)).status_code == 401
+        assert (
+            await reset.post(
+                "/api/v1/auth/login", json={"email": body["email"], "password": body["password"]}
+            )
+        ).is_success
+        assert (await reset.get("/api/v1/auth/profile")).json()["display_name"] == "Workshop Buyer"
+
+
 async def new_request(buyer):
     response = await buyer.post(
         "/api/v1/verifications",

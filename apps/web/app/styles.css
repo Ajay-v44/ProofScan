@@ -255,12 +255,28 @@ thead th { background: var(--canvas); color: var(--muted); font-size: .875rem; f
 .dialog[open] { animation: surface-in .15s ease-out both; }
 @keyframes surface-in { from { opacity: .5; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .dialog-side { inset: 0 0 0 auto; margin: 0 0 0 auto; width: min(100vw, 650px); height: 100dvh; max-height: none; border-radius: var(--ps-cover) 0 0 var(--ps-cover); }
+.dialog-workflow { inset: 0 0 0 auto; margin: 0 0 0 auto; width: min(100vw, 580px); height: 100dvh; max-height: none; border-radius: var(--ps-cover) 0 0 var(--ps-cover); }
 .dialog-frame { min-width: 0; }
 .dialog-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px clamp(14px, 3vw, 23px); border-bottom: 1px solid var(--line); background: var(--ps-surface); }
 .dialog-head h2 { overflow-wrap: anywhere; }
+.dialog-head p { margin-top: 4px; color: var(--muted); font-size: .875rem; }
+.dialog-workflow .dialog-head { padding-block: 18px; }
+.dialog-workflow .dialog-head .icon-button { flex-shrink: 0; }
 .dialog-content { padding: clamp(14px, 3vw, 23px); }
 .dialog-form, .detail-body, .search-dialog-body { display: grid; gap: 14px; }
 .dialog-form p:not(.notice) { color: var(--muted); }
+.verification-fields { display: grid; gap: 11px; min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: var(--ps-control); }
+.verification-fields legend { padding-inline: 4px; font-weight: 780; }
+.verification-fields p { font-size: .875rem; }
+.verification-fields .input-grid { align-items: end; }
+.verification-success { display: grid; gap: 10px; padding: 16px; border-radius: var(--ps-control); background: var(--ps-mint); }
+.signature-lookup { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, .85fr); gap: 16px; }
+.signature-panel { align-content: center; padding: clamp(18px, 4vw, 38px); }
+.signature-panel .form { max-width: 520px; }
+.signature-help { display: grid; align-content: start; gap: 0; padding: 0; overflow: hidden; }
+.signature-help img { width: 100%; height: clamp(120px, 16vw, 240px); object-fit: cover; }
+.signature-help > div { padding: 18px; display: grid; gap: 6px; }
+.signature-help p { color: var(--muted); }
 .search-field { display: flex; align-items: center; gap: 8px; color: var(--brand); }
 .search-field svg { flex-shrink: 0; }
 .search-results { display: grid; gap: 3px; }
@@ -306,6 +322,8 @@ thead th { background: var(--canvas); color: var(--muted); font-size: .875rem; f
   .public-navigation .nav-link { padding-inline: 6px; font-size: .875rem; gap: 4px; }
   .public-navigation .nav-link svg { width: 16px; }
   .dialog-side { border-radius: 0; }
+  .dialog-workflow { inset: auto 0 0; margin: 0 auto; height: auto; max-height: calc(100dvh - 16px); border-radius: var(--ps-cover) var(--ps-cover) 0 0; }
+  .signature-lookup { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 520px) {
   :root { --gutter: 14px; }

@@ -1,10 +1,10 @@
-import { Bell, CircleHelp, ClipboardList, House, MessagesSquare, PackageCheck, Search, ShieldCheck } from "lucide-react";
+import { Bell, CircleHelp, ClipboardList, House, MessagesSquare, PackageCheck, Search, ShieldCheck, UserRound } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Brand, ProductFooter } from "./shared";
 
 export type WorkspaceSection = "Home" | "Verifications" | "Activity";
-type WorkspacePage = WorkspaceSection | "Handoffs" | "Buyer chat" | "Operator" | "Purchase report";
+type WorkspacePage = WorkspaceSection | "Handoffs" | "Buyer chat" | "Operator" | "Purchase report" | "Profile";
 
 const destinations = [
   { name: "Home", href: "/workspace", Icon: House, section: "Home", compact: true },
@@ -34,6 +34,7 @@ export function WorkspaceFrame({ page, onSectionChange, lead, actions, sidebarAc
         })}
       </nav>
       <div className="sidebar-footer">
+        <Link className="nav-link" href="/profile" aria-current={page === "Profile" ? "page" : undefined}><UserRound size={19} aria-hidden /><span>Profile</span></Link>
         <Link className="nav-link" href="/about"><CircleHelp size={19} aria-hidden /><span>About &amp; support</span></Link>
         {sidebarActions}
       </div>
@@ -46,6 +47,7 @@ export function WorkspaceFrame({ page, onSectionChange, lead, actions, sidebarAc
           {lead ?? <Link href="/workspace?action=search" className="workspace-search" aria-label="Search workspace"><Search size={18} aria-hidden /><span>Search workspace</span><kbd>Ctrl K</kbd></Link>}
           <div className="top-actions">{actions ?? <>
             <Link className="icon-button compact-report" href="/verify" aria-label="Check a report"><ShieldCheck size={20} aria-hidden /></Link>
+            <Link className="icon-button" href="/profile" aria-label="Your profile"><UserRound size={20} aria-hidden /></Link>
             <Link className="icon-button" href="/help" aria-label="Help"><CircleHelp size={20} aria-hidden /></Link>
           </>}</div>
         </div>

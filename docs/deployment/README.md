@@ -39,4 +39,9 @@ The expiry worker commits batches of up to 250 verification rows. Evidence reten
 
 For Supabase Auth, supply `SUPABASE_URL` for the project and its publishable browser-safe key as `SUPABASE_PUBLISHABLE_KEY`. Use asymmetric JWT signing and set `AUTH_MODE=supabase`. To exercise hosted PostgreSQL, also supply a restricted `DATABASE_URL`. These credentials are available from Supabase Project Settings. Storage provisioning and live integrations require separate validation.
 
+### Account recovery
+
+- Apply Alembic revision `0011` before deploying the account pages. In local mode, sign in, open **Profile**, and choose **Generate recovery code**. Save the code privately. Recovery at `/forgot-password` uses the saved code and a new password. Replacing a code invalidates the previous one. A successful reset consumes the code and revokes existing local sessions.
+- In Supabase mode, configure the **Reset Password** email template to display `{{ .Token }}` and link to `{{ .SiteURL }}/reset-password`. Set the Site URL to the HTTPS ProofScan origin. Use the email settings and SMTP delivery appropriate for your project. Test an actual message and one-time code before enabling account recovery publicly. [Supabase email templates](https://supabase.com/docs/guides/auth/auth-email-templates) · [Supabase Auth rate limits](https://supabase.com/docs/guides/auth/rate-limits)
+
 Moonshot inference, hosted storage, store attestation and telemetry services require their own configuration at their integration milestones.

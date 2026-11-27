@@ -57,6 +57,7 @@ test("both public routes have the same canonical and share image; operator acces
   const admin = await page.goto("/admin");
   expect(admin?.headers()["x-robots-tag"]).toContain("noindex");
   await expect(page.getByRole("heading", { name: "Operator sign-in" })).toBeVisible();
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("dialog", { name: "Sign in" }).getByLabel("Email")).toBeFocused();
+  await page.getByRole("link", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/sign-in\?next=%2Fadmin$/);
+  await expect(page.getByLabel("Email address")).toBeVisible();
 });

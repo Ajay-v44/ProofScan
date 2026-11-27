@@ -3,10 +3,11 @@
 import { api, ApiError, type Verification } from "@proofscan/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import Link from "next/link";
 import { ErrorNote, Status } from "./shared";
 import { WorkspaceFrame } from "./workspace-frame";
-import { Button } from "./ui/button";
-import { AuthDialog } from "./workspace-forms";
+import { Button, buttonVariants } from "./ui/button";
+import { accountHref } from "./account-navigation";
 
 type AuditEntry = { id: string; actor_id: string; target_id: string; action: string; reason: string; created_at: string };
 type Metrics = { handoffs: Record<string, number>; scans: { platform: string; started: number; submitted: number }[];
@@ -24,7 +25,6 @@ const agentNames: Record<string, string> = {
 export function Operator() {
   const client = useQueryClient();
   const [identifier, setIdentifier] = useState("");
-  const [signIn, setSignIn] = useState(false);
   const overview = useQuery({ queryKey: ["admin", "overview"], queryFn: () => api<Record<string, number>>("/admin/overview") });
   const audit = useQuery({ queryKey: ["admin", "audit"], enabled: overview.isSuccess, queryFn: () => api<AuditEntry[]>("/admin/audit") });
   const metrics = useQuery({ queryKey: ["admin", "metrics"], enabled: overview.isSuccess, queryFn: () => api<Metrics>("/admin/metrics") });
@@ -46,11 +46,7 @@ export function Operator() {
   return <WorkspaceFrame page="Operator">
     <div className="page-title"><h1>ProofScan operator</h1><p>Review verification activity and manage report validity.</p></div>
     <ErrorNote error={(needsSignIn ? null : overview.error) ?? audit.error ?? metrics.error ?? usage.error ?? results.error ?? action.error} />
-    {needsSignIn && <section className="panel form"><h2>Operator sign-in</h2><p>Sign in with an account that has operator access.</p><Button onClick={() => setSignIn(true)}>Sign in</Button></section>}
-    {signIn && <AuthDialog initialRegister={false} onClose={() => setSignIn(false)} onAuthenticated={() => {
-      setSignIn(false);
-      void overview.refetch();
-    }} />}
+    {needsSignIn && <section className="panel form"><h2>Operator sign-in</h2><p>Sign in with an account that has operator access.</p><Link className={buttonVariants()} href={accountHref("sign-in", "/admin")}>Sign in</Link></section>}
     {overview.isPending && <p role="status">Checking operator access…</p>}
     {overview.data && <>
       <section className="panel form"><h2>Verification status</h2>

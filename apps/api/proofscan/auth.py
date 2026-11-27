@@ -4,7 +4,7 @@ import hmac
 import secrets
 from datetime import timedelta
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 import httpx
@@ -42,7 +42,7 @@ def jwks(issuer: str) -> jwt.PyJWKClient:
     return jwt.PyJWKClient(f"{issuer}/.well-known/jwks.json", timeout=5)
 
 
-async def subject(token: str) -> UUID:
+async def session_claims(token: str) -> dict[str, Any]:
     config = settings()
     try:
         if config.auth_mode == "supabase":
@@ -64,11 +64,16 @@ async def subject(token: str) -> UUID:
                 issuer="proofscan-local",
                 options={"require": ["sub", "exp", "iat"]},
             )
-        return UUID(claims["sub"])
+        UUID(claims["sub"])
+        return claims
     except jwt.PyJWKClientConnectionError as exc:
         raise HTTPException(503, "Sign-in service is unavailable.") from exc
     except (jwt.PyJWTError, ValueError, TypeError) as exc:
         raise HTTPException(401, "Your session has expired. Sign in again.") from exc
+
+
+async def subject(token: str) -> UUID:
+    return UUID((await session_claims(token))["sub"])
 
 
 async def current_user(request: Request, db: DB) -> UUID:
@@ -78,11 +83,16 @@ async def current_user(request: Request, db: DB) -> UUID:
     )
     if not token:
         raise HTTPException(401, "Sign in to continue.")
-    user = await subject(token)
-    if await db.scalar(select(User.id).where(User.id == user)) is None:
-        if settings().auth_mode != "supabase":
+    claims = await session_claims(token)
+    user = UUID(claims["sub"])
+    if settings().auth_mode == "local":
+        version = await db.scalar(select(User.session_version).where(User.id == user))
+        if version is None or claims.get("v", 0) != version:
             raise HTTPException(401, "Sign in again.")
+    elif await db.scalar(select(User.id).where(User.id == user)) is None:
         await db.execute(insert(User).values(id=user).on_conflict_do_nothing(index_elements=["id"]))
+    if isinstance(claims.get("email"), str):
+        request.state.account_email = claims["email"]
     return user
 
 
@@ -110,10 +120,16 @@ def set_cookie(response: Response, name: str, value: str, path: str, ttl: int) -
     )
 
 
-def login(response: Response, user: UUID) -> dict[str, str]:
+def login(response: Response, user: UUID, version: int = 0) -> dict[str, str]:
     issued = now()
     token = jwt.encode(
-        {"sub": str(user), "iat": issued, "exp": issued + timedelta(hours=8), "iss": "proofscan-local"},
+        {
+            "sub": str(user),
+            "iat": issued,
+            "exp": issued + timedelta(hours=8),
+            "iss": "proofscan-local",
+            "v": version,
+        },
         local_key(),
         algorithm="HS256",
     )
@@ -183,7 +199,7 @@ async def authenticate(data: Credentials, response: Response, db: DB) -> dict[st
     digest = await password_work.run(password_digest, data.password, decode(salt) if salt else bytes(16))
     if not user or not hmac.compare_digest(digest, expected):
         raise HTTPException(401, "Invalid email or password.")
-    return login(response, user.id)
+    return login(response, user.id, user.session_version)
 
 
 @router.get("/session")

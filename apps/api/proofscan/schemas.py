@@ -16,13 +16,16 @@ class Input(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+Email = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, to_lower=True, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+    ),
+]
+
+
 class Credentials(Input):
-    email: Annotated[
-        str,
-        StringConstraints(
-            strip_whitespace=True, to_lower=True, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
-        ),
-    ]
+    email: Email
     password: Annotated[str, StringConstraints(min_length=12, max_length=128)]
 
 

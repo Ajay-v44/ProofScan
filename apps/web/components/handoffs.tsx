@@ -12,7 +12,7 @@ import { angleName, jpeg, views } from "./photo-capture";
 import { CameraPicker } from "./camera-picker";
 import { EvidenceGallery } from "./evidence-gallery";
 import { LoadMore, useOwnerCollection } from "./owner-collection";
-import { AuthDialog } from "./workspace-forms";
+import { accountHref } from "./account-navigation";
 import { Button, buttonVariants } from "./ui/button";
 
 const conditionLabels: Record<string, string> = { clean: "No visible damage", visible_wear: "Visible wear", damaged: "Visible damage" };
@@ -24,7 +24,6 @@ const handoffLabels: Record<string, string> = {
 export function HandoffList() {
   const router = useRouter();
   const client = useQueryClient();
-  const [signIn, setSignIn] = useState(false);
   const session = useQuery({
     queryKey: ["session"], queryFn: () => api<{ user_id: string; simulator_enabled: boolean }>("/auth/session"),
   });
@@ -40,9 +39,8 @@ export function HandoffList() {
     <ErrorNote error={(needsAccount ? null : session.error) ?? list.error ?? create.error} />
     {needsAccount && <section className="panel form"><h2>Start a new handoff</h2>
       <p>Sign in to save the starting condition and return to it when the item comes back.</p>
-      <Button onClick={() => setSignIn(true)}>Sign in</Button>
+      <Link className={buttonVariants()} href={accountHref("sign-in", "/handoffs")}>Sign in</Link>
     </section>}
-    {signIn && !session.data && <AuthDialog initialRegister={false} onAuthenticated={() => setSignIn(false)} onClose={() => setSignIn(false)} />}
     {session.data && <div className="handoff-library"><form className="panel form" onSubmit={event => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
